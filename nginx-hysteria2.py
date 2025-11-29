@@ -258,7 +258,22 @@ def download_hysteria2(base_dir):
     try:
         # 在下载前，强制停止所有可能的 hysteria 进程
         print("🔧 正在停止现有的 Hysteria 进程以防止文件占用...")
-        subprocess.run(['sudo', 'pkill', '-f', 'hysteria'], check=False)
+        # 1. 使用 pgrep 精确查找名为 "hysteria" 的进程ID。
+        # 2. 如果找到PID，则使用 kill 命令终止它们。
+        # 3. 这种方式不会误杀当前正在运行的Python脚本。
+        # 使用pgrep查找PID，然后kill，避免误杀自身
+        try:
+            # 查找名为'hysteria'的进程ID
+            result = subprocess.run(['pgrep', '-f', '^/root/.hysteria2/hysteria$'], capture_output=True, text=True)
+            if result.stdout:
+                pids = result.stdout.strip().split('\n')
+                print(f"   发现正在运行的Hysteria进程，PID: {', '.join(pids)}，正在终止...")
+                # 使用kill命令终止找到的进程
+                subprocess.run(['sudo', 'kill', '-9'] + pids, check=False)
+        except FileNotFoundError:
+            # 如果pgrep命令不存在，回退到原来的方法，但风险仍在
+            print("   (警告: pgrep 命令未找到, 尝试使用 pkill)")
+            subprocess.run(['sudo', 'pkill', '-f', 'hysteria-server'], check=False) # 尝试更精确的匹配
         time.sleep(2) # 等待进程完全退出
         version = get_latest_version()
         os_name, arch = get_system_info()
