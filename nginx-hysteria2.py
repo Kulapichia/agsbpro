@@ -255,11 +255,11 @@ def verify_binary(binary_path):
 
 def download_hysteria2(base_dir):
     """下载Hysteria2二进制文件，使用简化链接和验证方式"""
+    try:
         # 在下载前，强制停止所有可能的 hysteria 进程
         print("🔧 正在停止现有的 Hysteria 进程以防止文件占用...")
         subprocess.run(['sudo', 'pkill', '-f', 'hysteria'], check=False)
         time.sleep(2) # 等待进程完全退出
-    try:
         version = get_latest_version()
         os_name, arch = get_system_info()
         filename = get_download_filename(os_name, arch)
