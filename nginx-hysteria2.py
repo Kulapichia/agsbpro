@@ -3172,9 +3172,9 @@ class ConfigHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory="{config_dir}", **kwargs)
     
     def end_headers(self):
-        if self.path.endswith(('.yaml', '.yml', '.json')):
+        if hasattr(self, 'path') and self.path.endswith(('.yaml', '.yml', '.json')):
             filename = os.path.basename(self.path)
-            self.send_header('Content-Disposition', f'attachment; filename="{{filename}}"')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
             self.send_header('Content-Type', 'application/octet-stream')
         super().end_headers()
     
