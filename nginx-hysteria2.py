@@ -441,7 +441,7 @@ http {{
         subprocess.run(['sudo', 'cp', '/etc/nginx/nginx.conf', '/etc/nginx/nginx.conf.backup'], check=True)
         
         import tempfile
-        # 确保目标目录存在，修复 "No such file or directory" 错误
+        # 确保目标目录存在
         subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(ssl_conf_file)], check=True)
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
             tmp.write(nginx_conf)
@@ -2072,6 +2072,8 @@ server {{
             
             # 写入新配置
             import tempfile
+            # 确保目标目录存在
+            subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(ssl_conf_file)], check=True)
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
                 tmp.write(ssl_conf)
                 tmp.flush()
@@ -3010,6 +3012,8 @@ server {{
         # 5. 写入nginx配置
         ssl_conf_file = "/etc/nginx/conf.d/hysteria2-ssl.conf"
         import tempfile
+        # 确保目录存在
+        subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(ssl_conf_file)], check=True)
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
             tmp.write(ssl_conf)
             tmp.flush()
@@ -3196,7 +3200,7 @@ class ConfigHandler(http.server.SimpleHTTPRequestHandler):
     def end_headers(self):
         if hasattr(self, 'path') and self.path.endswith(('.yaml', '.yml', '.json')):
             filename = os.path.basename(self.path)
-            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Disposition', f'attachment; filename="{{filename}}"')
             self.send_header('Content-Type', 'application/octet-stream')
         super().end_headers()
     
