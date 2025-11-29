@@ -421,6 +421,8 @@ http {{
         subprocess.run(['sudo', 'cp', '/etc/nginx/nginx.conf', '/etc/nginx/nginx.conf.backup'], check=True)
         
         import tempfile
+        # 确保目标目录存在，修复 "No such file or directory" 错误
+        subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(ssl_conf_file)], check=True)
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
             tmp.write(nginx_conf)
             tmp.flush()
