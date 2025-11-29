@@ -6,9 +6,10 @@
 
 ## 📑 目录
 
-- [🛡️ Hysteria2 一键部署工具](#-hysteria2-一键部署工具)
+- [🛡️ Hysteria2 一键部署工具](#️-hysteria2-一键部署工具)
   - [✨ 核心特性](#-核心特性)
   - [🚀 快速开始](#-快速开始)
+  - [🛠️ 进阶操作：使用 Systemd 持久化服务](#️-进阶操作使用-systemd-持久化服务)
   - [🔧 技术架构](#-技术架构)
   - [🔥 防火墙配置](#-防火墙配置)
   - [📊 功能详解](#-功能详解)
@@ -59,26 +60,24 @@
 
 ### 🚀 快速开始
 
-
 #### 📥 一键部署
 ```bash
 # 方式一：wget下载
-cd ~ && wget https://raw.githubusercontent.com/zhumengkang/agsb/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
-
-
+cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
 # 方式二：curl下载  
-cd ~ && curl -O https://raw.githubusercontent.com/zhumengkang/agsb/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
-
+cd ~ && curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
+sudo nginx -t && sudo nginx -s reload
 ```
+> **注意**：执行完毕后，请妥善保存屏幕上输出的 **“服务器信息”**，这是客户端连接的凭证。
 
 #### 📥 下载脚本
 
 ```bash
 # 方式一：wget下载
-wget https://raw.githubusercontent.com/zhumengkang/agsb/main/nginx-hysteria2.py
+wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py
 
 # 方式二：curl下载  
-curl -O https://raw.githubusercontent.com/zhumengkang/agsb/main/nginx-hysteria2.py
+curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py
 ```
 
 #### ⚡ 最简部署
@@ -106,6 +105,75 @@ python3 nginx-hysteria2.py install --simple \
   --port-range 28888-29999 \
   --enable-bbr
 ```
+
+### 🛠️ 进阶操作：使用 Systemd 持久化服务
+
+> 标准安装启动的配置文件下载服务（`config_server.py`）是临时的。为确保其稳定运行并在服务器重启后自动启动，强烈建议使用 `Systemd` 进行持久化管理。
+
+#### **第一步：停止所有临时服务**
+
+在执行完首次安装后，我们需要先停掉由脚本临时启动的服务。
+
+```bash
+# 停止 Hysteria2 主服务
+bash ~/.hysteria2/stop.sh
+
+# 停止临时的 Python 文件服务
+# 如果找不到进程也无需担心，说明它可能已停止
+sudo kill $(pgrep -f "config_server.py")
+```
+
+#### **第二步：创建 Systemd 服务文件**
+
+使用 `vim` 或 `nano` 编辑器创建一个新的服务配置文件。
+
+```bash
+sudo vim /etc/systemd/system/hysteria-fileserver.service
+```
+
+将以下内容**完整地复制并粘贴**到编辑器中：
+
+```ini
+[Unit]
+Description=Hysteria2 Config File Server
+After=network.target
+
+[Service]
+Type=simple
+# 确保这个Python脚本的路径是正确的
+ExecStart=/usr/bin/python3 /root/.hysteria2/config_server.py
+WorkingDirectory=/root/.hysteria2/
+# 这是最重要的部分：如果服务挂了，5秒后自动重启
+Restart=always
+RestartSec=5s
+User=root
+Group=root
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+> 保存并退出 (Vim: 按 `Esc` 输入 `:wq` 回车; Nano: 按 `Ctrl+X`, 按 `Y`, 回车)。
+
+#### **第三步：启动并启用 Systemd 服务**
+
+依次执行以下命令来启动、设置开机自启并检查服务状态。
+
+```bash
+# 1. 重新加载配置，让 systemd 知道我们创建了新服务
+sudo systemctl daemon-reload
+
+# 2. 设置开机自动启动
+sudo systemctl enable hysteria-fileserver
+
+# 3. 立即启动服务
+sudo systemctl start hysteria-fileserver
+
+# 4. 检查服务状态
+sudo systemctl status hysteria-fileserver
+```
+如果看到 `Active: active (running)` 的绿色字样，表示服务已成功持久化运行。
 
 ### 📋 基础命令
 
