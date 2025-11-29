@@ -263,17 +263,18 @@ def download_hysteria2(base_dir):
         # 3. 这种方式不会误杀当前正在运行的Python脚本。
         # 使用pgrep查找PID，然后kill，避免误杀自身
         try:
-            # 查找名为'hysteria'的进程ID
-            result = subprocess.run(['pgrep', '-f', '^/root/.hysteria2/hysteria$'], capture_output=True, text=True)
-            if result.stdout:
-                pids = result.stdout.strip().split('\n')
-                print(f"   发现正在运行的Hysteria进程，PID: {', '.join(pids)}，正在终止...")
-                # 使用kill命令终止找到的进程
+            # -f 匹配完整命令行, 使用正则表达式 '^... server' 精确匹配 Hysteria 服务进程
+            # 这不会匹配到 python3 nginx-hysteria2.py
+            pgrep_cmd = "pgrep -f \"/root/.hysteria2/hysteria server\""
+            pids_str = subprocess.check_output(pgrep_cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
+            if pids_str:
+                pids = pids_str.split('\n')
+                print(f"   发现正在运行的Hysteria进程, PID(s): {', '.join(pids)}, 正在终止...")
                 subprocess.run(['sudo', 'kill', '-9'] + pids, check=False)
-        except FileNotFoundError:
-            # 如果pgrep命令不存在，回退到原来的方法，但风险仍在
-            print("   (警告: pgrep 命令未找到, 尝试使用 pkill)")
-            subprocess.run(['sudo', 'pkill', '-f', 'hysteria-server'], check=False) # 尝试更精确的匹配
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            # 如果 pgrep 失败或未找到，回退到 pkill，但使用更精确的匹配模式
+            print("   (警告: pgrep 命令失败或未找到，尝试使用 pkill)")
+            subprocess.run(['sudo', 'pkill', '-f', "hysteria server -c"], check=False)
         time.sleep(2) # 等待进程完全退出
         version = get_latest_version()
         os_name, arch = get_system_info()
