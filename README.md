@@ -66,13 +66,14 @@
 # 方式一：wget下载
 cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
 
-# 方式二：curl下载  
+# 方式二：curl下载
 cd ~ && curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
 
-# 最后重载Nginx使配置生效
-sudo nginx -t && sudo nginx -s reload
+
 ```
-> **注意**：执行完毕后，请妥善保存屏幕上输出的 **“服务器信息”**，这是客户端连接的凭证。
+> **注意**：执行完毕后，请妥善保存屏幕上输出的 **“服务器信息”**。脚本已自动处理Nginx，无需手动重载。
+>
+> **强烈建议**：完成此步骤后，继续执行下一节 **“使用 Systemd 持久化服务”**，以确保服务在服务器重启后能自动运行。
 
 #### 📥 下载脚本
 
@@ -80,7 +81,7 @@ sudo nginx -t && sudo nginx -s reload
 # 方式一：wget下载
 wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py
 
-# 方式二：curl下载  
+# 方式二：curl下载
 curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py
 ```
 
@@ -112,52 +113,79 @@ python3 nginx-hysteria2.py install --simple \
 
 ### 🛠️ 进阶操作：使用 Systemd 持久化服务
 
-> 标准安装启动的配置文件下载服务（`config_server.py`）是临时的。为确保其稳定运行并在服务器重启后自动启动，强烈建议使用 `Systemd` 进行持久化管理。
+> **关键步骤**：标准安装启动的服务是临时的。为确保服务稳定并在服务器重启后自动运行，请务必执行以下操作。
 
 #### **第一步：停止所有临时服务**
 
-在执行完首次安装后，我们需要先停掉由脚本临时启动的服务。
+在执行完“一键部署”后，我们需要先停掉由脚本临时启动的所有服务，以避免端口冲突。
 
 ```bash
-# 停止 Hysteria2 主服务
+# 停止 Hysteria2 主代理服务
 bash ~/.hysteria2/stop.sh
 
-# 停止临时的 Python 文件服务
-# 如果找不到进程也无需担心，说明它可能已停止
-sudo kill $(pgrep -f "config_server.py")
+# 停止临时的 Python 文件下载服务 (8080端口)
+# 使用 pkill 精确查找并终止进程，如果找不到也无需担心
+sudo pkill -f "config_server.py"
 ```
 
-#### **第二步：创建 Systemd 服务文件**
+#### **第二步：创建两个 Systemd 服务文件**
 
-使用 `vim` 或 `nano` 编辑器创建一个新的服务配置文件。
+我们需要分别为 **Hysteria2主服务** 和 **文件下载服务** 创建配置文件，让 Systemd 来管理它们。
 
-```bash
-sudo vim /etc/systemd/system/hysteria-fileserver.service
-```
+1.  **为主代理服务创建 `hysteria-server.service`**
 
-将以下内容**完整地复制并粘贴**到编辑器中：
+    ```bash
+    sudo vim /etc/systemd/system/hysteria-server.service
+    ```
+    将以下内容**完整地复制并粘贴**到编辑器中：
+    ```ini
+    [Unit]
+    Description=Hysteria2 Proxy Server
+    After=network.target
 
-```ini
-[Unit]
-Description=Hysteria2 Config File Server
-After=network.target
+    [Service]
+    Type=simple
+    # 确保路径正确，这是Hysteria2主程序的启动命令
+    ExecStart=/root/.hysteria2/hysteria server -c /root/.hysteria2/config/config.json
+    WorkingDirectory=/root/.hysteria2/
+    Restart=always
+    RestartSec=5s
+    User=root
+    Group=root
+    StandardOutput=journal
+    StandardError=journal
 
-[Service]
-Type=simple
-# 确保这个Python脚本的路径是正确的
-ExecStart=/usr/bin/python3 /root/.hysteria2/config_server.py
-WorkingDirectory=/root/.hysteria2/
-# 这是最重要的部分：如果服务挂了，5秒后自动重启
-Restart=always
-RestartSec=5s
-User=root
-Group=root
-StandardOutput=journal
-StandardError=journal
+    [Install]
+    WantedBy=multi-user.target
+    ```
 
-[Install]
-WantedBy=multi-user.target
-```
+2.  **为文件下载服务创建 `hysteria-fileserver.service`**
+
+    ```bash
+    sudo vim /etc/systemd/system/hysteria-fileserver.service
+    ```
+    将以下内容**完整地复制并粘贴**到编辑器中：
+    ```ini
+    [Unit]
+    Description=Hysteria2 Config File Server
+    After=network.target
+
+    [Service]
+    Type=simple
+    # 确保这个Python脚本的路径是正确的
+    ExecStart=/usr/bin/python3 /root/.hysteria2/config_server.py
+    WorkingDirectory=/root/.hysteria2/
+    # 这是最重要的部分：如果服务挂了，5秒后自动重启
+    Restart=always
+    RestartSec=5s
+    User=root
+    Group=root
+    StandardOutput=journal
+    StandardError=journal
+
+    [Install]
+    WantedBy=multi-user.target
+    ```
 > 保存并退出 (Vim: 按 `Esc` 输入 `:wq` 回车; Nano: 按 `Ctrl+X`, 按 `Y`, 回车)。
 
 #### **第三步：启动并启用 Systemd 服务**
@@ -165,25 +193,34 @@ WantedBy=multi-user.target
 依次执行以下命令来启动、设置开机自启并检查服务状态。
 
 ```bash
-# 1. 重新加载配置，让 systemd 知道我们创建了新服务
+# 1. 重新加载配置，让 systemd 识别新创建的服务
 sudo systemctl daemon-reload
 
-# 2. 设置开机自动启动
-sudo systemctl enable hysteria-fileserver
+# 2. 将两个服务都设置为开机自动启动
+sudo systemctl enable hysteria-server.service hysteria-fileserver.service
 
-# 3. 立即启动服务
-sudo systemctl start hysteria-fileserver
-
-# 4. 检查服务状态
-sudo systemctl status hysteria-fileserver
+# 3. 立即启动这两个服务
+sudo systemctl start hysteria-server.service hysteria-fileserver.service
 ```
-如果看到 `Active: active (running)` 的绿色字样，表示服务已成功持久化运行。如果服务启动失败，请参考下方的 **[故障排除](#-故障排除)** 章节。
+
+#### **第四步：验证服务状态**
+
+检查两个服务的状态，确保它们都已成功持久化运行。
+
+```bash
+# 检查主代理服务状态
+sudo systemctl status hysteria-server.service
+
+# 检查文件下载服务状态
+sudo systemctl status hysteria-fileserver.service
+```
+如果两个服务的状态都显示绿色的 `Active: active (running)`，则表示所有服务已成功持久化运行。如果服务启动失败，请参考下方的 **[故障排除](#-故障排除)** 章节。
 
 ### 🔧 故障排除
 
 #### 问题：Systemd 服务启动失败，状态为 `activating (auto-restart)`
 
-如果你在执行 `sudo systemctl status hysteria-fileserver` 后，看到服务状态不是 `active (running)`，而是处于不断重启的 `activating` 状态，通常是由于端口被占用导致的。
+如果你在执行 `sudo systemctl status ...` 后，看到服务状态不是 `active (running)`，而是处于不断重启的 `activating` 状态，通常是由于端口被占用导致的。
 
 **解决方案：**
 
@@ -192,12 +229,15 @@ sudo systemctl status hysteria-fileserver
     执行以下命令，查看具体的错误原因。大概率会看到 `Address already in use` (地址已被占用) 的提示。
     
     ```bash
+    # 如果是文件服务出问题
     sudo journalctl -u hysteria-fileserver.service -n 50 --no-pager
+    # 如果是主服务出问题
+    sudo journalctl -u hysteria-server.service -n 50 --no-pager
     ```
 
 2.  **第二步：查找并终止占用端口的进程**
     
-    配置文件下载服务 `config_server.py` 默认使用 **8080** 端口。使用以下命令找出是哪个进程占用了它。
+    文件下载服务 `config_server.py` 默认使用 **8080** 端口。使用以下命令找出是哪个进程占用了它。
     
     ```bash
     sudo ss -tulpn | grep ':8080'
@@ -211,7 +251,7 @@ sudo systemctl status hysteria-fileserver
     ```bash
     sudo kill -9 12345
     ```
-    > 如果找不到特定 PID，也可以再次尝试 `sudo kill $(pgrep -f "config_server.py")` 来清理残留进程。
+    > 也可以再次尝试 `sudo pkill -f "config_server.py"` 来清理残留进程。
 
 4.  **第四步：重启服务并最终验证**
     
@@ -219,13 +259,13 @@ sudo systemctl status hysteria-fileserver
     
     ```bash
     # 重新启动服务
-    sudo systemctl restart hysteria-fileserver
+    sudo systemctl restart hysteria-fileserver.service
     
     # 稍等几秒钟
     sleep 3
     
     # 检查最终状态
-    sudo systemctl status hysteria-fileserver
+    sudo systemctl status hysteria-fileserver.service
     ```
     此时，服务状态应该会变为 `Active: active (running)`。
 
