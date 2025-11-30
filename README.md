@@ -307,6 +307,7 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     ```bash
     sudo pkill -9 -f "hysteria server"
     ```
+
 2.  **第二步：重新运行安装脚本以生成配置文件**
   
     这一步的目的是让脚本重新生成所有缺失的配置文件、证书和脚本。
