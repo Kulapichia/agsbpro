@@ -299,7 +299,14 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     ```bash
     sudo systemctl stop hysteria-server.service
     ```
-
+查找正在运行的 hysteria 进程的 PID
+    ```bash
+    pgrep -f hysteria
+    ```
+假设上一步返回了 PID 409454，现在用 pkill 终止它
+    ```bash
+    sudo pkill -9 -f "hysteria server"
+    ```
 2.  **第二步：重新运行安装脚本以生成配置文件**
   
     这一步的目的是让脚本重新生成所有缺失的配置文件、证书和脚本。
