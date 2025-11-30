@@ -910,7 +910,7 @@ echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 
 | 平台 | 链接 |
 |------|------|
-| **作者** | 康康 |
+| **作者** | 空空 |
 | **GitHub** | https://github.com/Kulapichia/agsbpro/ |
 | **YouTube** | https://www.youtube.com/@ChupachiehChuanshuo |
 | **Telegram** | https://t.me/chm_IME|
