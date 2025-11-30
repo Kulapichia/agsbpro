@@ -911,9 +911,9 @@ echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 | 平台 | 链接 |
 |------|------|
 | **作者** | 康康 |
-| **GitHub** | https://github.com/zhumengkang/ |
-| **YouTube** | https://www.youtube.com/@康康的V2Ray与Clash |
-| **Telegram** | https://t.me/+WibQp7Mww1k5MmZl |
+| **GitHub** | https://github.com/Kulapichia/agsbpro/ |
+| **YouTube** | https://www.youtube.com/@ChupachiehChuanshuo |
+| **Telegram** | https://t.me/chm_IME|
 
 ---
 
