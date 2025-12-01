@@ -36,3 +36,5 @@ jobs:
         with:
           script_id: 29858
           file: "upload-sshx.py"
+        env:
+          BUNNY_API_KEY: ${{ secrets.BUNNY_API_KEY }}
