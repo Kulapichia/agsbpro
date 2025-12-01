@@ -2833,7 +2833,10 @@ http:
     obfs-password: "{obfs_password}"
     sni: {server_address}
     skip-cert-verify: true
-    fast-open: true""")
+    fast-open: true
+    up-mbps: 50
+    down-mbps: 200
+    heartbeat: 15s""")
         
         clash_config = f"""# Clash Meta Hysteria2 多端口配置
 # 包含{len(selected_ports)}个不同端口的节点，支持手动切换端口
