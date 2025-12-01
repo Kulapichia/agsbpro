@@ -14,6 +14,8 @@ import argparse
 from pathlib import Path
 import base64
 import random
+import getpass
+import tempfile
 
 def get_user_home():
     """获取用户主目录"""
@@ -1150,6 +1152,7 @@ fi
 def delete_hysteria2():
     """完整删除Hysteria2安装的5步流程"""
     print("🗑️ 开始完整删除Hysteria2...")
+    remove_systemd_services()
     print("📋 删除流程: 停止服务 → 清理iptables → 清理nginx → 删除目录 → 清理服务")
     
     home = get_user_home()
@@ -1881,9 +1884,9 @@ def main():
     parser.add_argument('--port-range', 
                       help='指定端口跳跃范围 (格式: 起始端口-结束端口，如: 28888-29999)')
     parser.add_argument('--enable-bbr', action='store_true',
-                      help='启用BBR拥塞控制算法优化网络性能')
-    
-    
+                      help='启用BBR拥塞控制算法优化网络性能')   
+    parser.add_argument('--no-systemd', action='store_true',
+                      help='不使用 Systemd，使用临时的 nohup 启动方式')    
     args = parser.parse_args()
     
     if args.command == 'del':
@@ -2281,7 +2284,18 @@ curl -k https://{domain}  # HTTPS访问
         stop_script = create_stop_script(base_dir)
         
         # 立即启动Hysteria2服务
-        service_started = start_service(start_script, port, base_dir)
+        # service_started = start_service(start_script, port, base_dir) # 注释或删除这行
+        
+        # 自动化配置 Systemd 服务
+        if not args.no_systemd:
+            systemd_success = create_and_enable_systemd_services(base_dir, binary_path, config_path)
+            if not systemd_success:
+                # 如果 Systemd 失败，回退到旧的 nohup 启动方式
+                print("   -> Systemd 配置失败，回退到 nohup 启动...")
+                start_service(start_script, port, base_dir)
+        else:
+            print("🔧 已选择不使用 Systemd，使用 nohup 启动...")
+            start_service(start_script, port, base_dir)
         
         # 自动配置nginx Web伪装 (如果启用)
         nginx_success = False
@@ -3819,6 +3833,116 @@ def generate_multi_port_subscription(server_address, password, obfs_password, po
             f.write(link + "\n")
     
     return subscription_file, subscription_plain_file, len(selected_ports)
+def get_current_user():
+    """获取执行脚本的真实用户，即使使用了sudo"""
+    return os.getenv('SUDO_USER', getpass.getuser())
+
+def create_and_enable_systemd_services(base_dir, binary_path, config_path):
+    """自动创建并启用 Systemd 服务"""
+    print("🚀 正在自动化配置 Systemd 服务...")
+    
+    # 检查 systemctl 是否存在
+    if not shutil.which('systemctl'):
+        print("⚠️ 未找到 systemctl 命令，无法配置 Systemd 服务。将使用 nohup 启动。")
+        return False
+
+    try:
+        user = get_current_user()
+        home_dir = os.path.expanduser(f'~{user}')
+        python_executable = sys.executable  # 获取当前 Python 解释器的路径
+        
+        # --- Hysteria2 主服务 ---
+        hysteria_service_content = f"""[Unit]
+Description=Hysteria2 Proxy Server (Managed by script)
+After=network.target nginx.service
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={home_dir}/.hysteria2
+ExecStart={binary_path} server -c {config_path}
+Restart=always
+RestartSec=5s
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+"""
+        # --- 配置文件下载服务 ---
+        fileserver_path = f"{base_dir}/config_server.py"
+        fileserver_service_content = f"""[Unit]
+Description=Hysteria2 Config File Server (Managed by script)
+After=network.target
+
+[Service]
+Type=simple
+User={user}
+WorkingDirectory={home_dir}/.hysteria2
+ExecStart={python_executable} {fileserver_path}
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+"""
+        # 使用临时文件写入，然后用sudo复制，避免权限问题
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.service') as tmp:
+            tmp.write(hysteria_service_content)
+            tmp_path_hysteria = tmp.name
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.service') as tmp:
+            tmp.write(fileserver_service_content)
+            tmp_path_fileserver = tmp.name
+
+        print("   - 正在复制服务文件...")
+        subprocess.run(['sudo', 'cp', tmp_path_hysteria, '/etc/systemd/system/hysteria-server.service'], check=True)
+        subprocess.run(['sudo', 'cp', tmp_path_fileserver, '/etc/systemd/system/hysteria-fileserver.service'], check=True)
+        os.unlink(tmp_path_hysteria)
+        os.unlink(tmp_path_fileserver)
+
+        print("   - 重新加载 Systemd 配置...")
+        subprocess.run(['sudo', 'systemctl', 'daemon-reload'], check=True)
+
+        print("   - 设置服务开机自启...")
+        subprocess.run(['sudo', 'systemctl', 'enable', 'hysteria-server.service'], check=True)
+        subprocess.run(['sudo', 'systemctl', 'enable', 'hysteria-fileserver.service'], check=True)
+
+        print("   - 正在启动/重启服务...")
+        subprocess.run(['sudo', 'systemctl', 'restart', 'hysteria-server.service'], check=True)
+        subprocess.run(['sudo', 'systemctl', 'restart', 'hysteria-fileserver.service'], check=True)
+        
+        print("✅ Systemd 服务配置成功！服务已由 Systemd 接管。")
+        print("   使用 `sudo systemctl status hysteria-server` 查看主服务状态。")
+        print("   使用 `sudo systemctl status hysteria-fileserver` 查看文件服务状态。")
+        return True
+
+    except Exception as e:
+        print(f"❌ 自动化 Systemd 配置失败: {e}")
+        print("   请检查您是否拥有 sudo 权限。")
+        print("   脚本将回退到临时的 nohup 启动方式。")
+        return False
+
+def remove_systemd_services():
+    """卸载时自动移除 Systemd 服务"""
+    print("🗑️ 正在清理 Systemd 服务...")
+    services = ['hysteria-server.service', 'hysteria-fileserver.service']
+    for service in services:
+        service_path = f"/etc/systemd/system/{service}"
+        if os.path.exists(service_path):
+            try:
+                print(f"   - 正在停止并禁用 {service}...")
+                subprocess.run(['sudo', 'systemctl', 'stop', service], check=False, capture_output=True)
+                subprocess.run(['sudo', 'systemctl', 'disable', service], check=False, capture_output=True)
+                print(f"   - 正在删除 {service_path}...")
+                subprocess.run(['sudo', 'rm', service_path], check=True)
+            except Exception as e:
+                print(f"   - 清理 {service} 失败: {e}")
+    try:
+        print("   - 重新加载 Systemd 配置...")
+        subprocess.run(['sudo', 'systemctl', 'daemon-reload'], check=True)
+        print("✅ Systemd 服务清理完成。")
+    except Exception as e:
+        print(f"   - 重新加载 Systemd 配置失败: {e}")
 
 if __name__ == "__main__":
     main() 
