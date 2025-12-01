@@ -961,7 +961,7 @@ echo "nameserver 8.8.8.8" >> /etc/resolv.conf
 | **作者** | 空空 |
 | **GitHub** | https://github.com/Kulapichia/agsbpro/ |
 | **YouTube** | https://www.youtube.com/@ChupachiehChuanshuo |
-| **Telegram** | https://t.me/chm_IME|
+| **Telegram** | https://t.me/MallSpot|
 
 ---
 
