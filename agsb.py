@@ -916,6 +916,9 @@ def get_tunnel_domain():
                     domain = domain_match.group(1)
                     write_debug_log(f"从日志中提取到域名: {domain}")
                     print(f"获取到临时域名: {domain}")
+                    # 在获取域名后增加额外等待，确保隧道在Cloudflare网络中完全稳定
+                    print("域名已获取，额外等待5秒以确保隧道稳定...")
+                    time.sleep(5)
                     return domain
             except Exception as e:
                 write_debug_log(f"读取日志文件出错: {e}")
