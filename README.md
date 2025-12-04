@@ -376,6 +376,85 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     sudo systemctl status hysteria-server.service
     ```
     此时，服务状态应该会变为 `Active: active (running)`。
+
+#### 问题：整体处理
+
+如果按照 “进阶操作” 设置 `systemd` 服务后，服务无法启动 (例如 `status` 命令显示 `failed` 或 `activating`)，通常是由于旧的进程/配置与新服务冲突。
+
+我们提供了一个终极解决方案，可以彻底清理环境并帮助您成功启动服务。
+
+#### 第一步：彻底停止和清理所有相关服务和进程
+
+这一步将确保没有任何残留项干扰后续操作。
+
+```bash
+# 1. 停止并禁用 systemd 服务 (这是最关键的一步，防止 systemd 自动重启)
+sudo systemctl stop hysteria-server.service
+sudo systemctl disable hysteria-server.service
+sudo systemctl stop hysteria-fileserver.service
+sudo systemctl disable hysteria-fileserver.service
+
+# 2. 强制杀死所有可能残留的 Hysteria 和 Python 文件服务进程
+#    -9 参数是强制信号，确保进程被杀死
+sudo pkill -9 -f "hysteria"
+sudo pkill -9 -f "config_server.py"
+
+# 3. 重新加载 systemd，让它忘记旧的服务单元文件
+sudo systemctl daemon-reload
+
+# 4. 删除旧的 systemd 单元文件 (如果存在)
+sudo rm -f /etc/systemd/system/hysteria-server.service
+sudo rm -f /etc/systemd/system/hysteria-fileserver.service
+
+# 5. 删除旧的配置文件目录 (脚本可能已经删了，再确认一次)
+sudo rm -rf /root/.hysteria2
+```
+
+#### 第二步：验证清理是否成功
+
+在执行下一步之前，请务必确认环境中已经没有 Hysteria 的残留。
+
+```bash
+# 检查是否还有 hysteria 相关的进程，此命令不应返回任何结果 (除了 grep 本身)
+ps aux | grep -i "hysteria"
+ps aux | grep "config_server.py"
+
+# 检查 8080 端口是否还被监听，此命令不应返回任何结果
+sudo ss -tulnp | grep 8080
+# 或者使用 lsof
+# sudo lsof -i :8080
+```
+
+如果以上命令都没有任何输出，说明你的环境已经清理干净了。
+
+#### 第三步：重新运行安装脚本
+
+现在，在一个干净的环境下，再次执行你的安装命令。**这一步会重新生成所有必要的文件**。
+
+```bash
+# 确保你还在 ~ 目录下
+cd ~
+
+# 重新运行你最初使用的安装脚本
+# 例如，如果你使用的是高性能部署命令：
+python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
+```
+
+> **重要提示**：安装脚本执行完毕后，它会启动一个**临时**的服务。接下来，你需要**重新按照 [使用 Systemd 持久化服务](#️-进阶操作使用-systemd-持久化服务) 章节的指引**，从“第一步：停止所有临时服务”开始，一步步创建和启动 `systemd` 服务。
+
+#### 第四步：验证新安装是否成功
+
+在**完成第三步并重新配置好 `systemd` 服务后**，使用以下命令来最终验证。
+
+```bash
+# 检查主服务，应该显示 active (running)
+sudo systemctl status hysteria-server.service --no-pager
+
+# 检查文件下载服务，也应该显示 active (running)
+sudo systemctl status hysteria-fileserver.service --no-pager
+```
+如果两个服务都显示 `active (running)`，那么恭喜你，问题已成功解决！
+
 ### 📋 基础命令
 
 | 命令 | 功能 |
