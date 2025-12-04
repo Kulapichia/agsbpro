@@ -454,7 +454,7 @@ sudo systemctl status hysteria-server.service --no-pager
 sudo systemctl status hysteria-fileserver.service --no-pager
 ```
 如果两个服务都显示 `active (running)`，那么恭喜你，问题已成功解决！
----
+
 ### 📋 基础命令
 
 | 命令 | 功能 |
