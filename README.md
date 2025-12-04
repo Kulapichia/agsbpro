@@ -376,7 +376,7 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     sudo systemctl status hysteria-server.service
     ```
     此时，服务状态应该会变为 `Active: active (running)`。
-
+---
 #### 问题：整体处理
 
 如果按照 “进阶操作” 设置 `systemd` 服务后，服务无法启动 (例如 `status` 命令显示 `failed` 或 `activating`)，通常是由于旧的进程/配置与新服务冲突。
@@ -454,7 +454,7 @@ sudo systemctl status hysteria-server.service --no-pager
 sudo systemctl status hysteria-fileserver.service --no-pager
 ```
 如果两个服务都显示 `active (running)`，那么恭喜你，问题已成功解决！
-
+---
 ### 📋 基础命令
 
 | 命令 | 功能 |
