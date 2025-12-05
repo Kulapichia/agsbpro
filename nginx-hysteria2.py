@@ -3095,11 +3095,19 @@ server {{
             os.unlink(tmp.name)
         
         # 6. 测试并重启nginx
+        print("   - 正在测试 Nginx 配置...")
         test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
         if test_result.returncode != 0:
-            print(f"❌ nginx配置错误: {test_result.stderr}")
+            print(f"❌ Nginx 配置测试失败! 这是导致 Web 伪装无效的主要原因。")
+            print("\033[91m" + test_result.stderr.strip() + "\033[0m")
+            print("\n💡 可能的原因及解决方案:")
+            print("   1. \033[33m端口冲突\033[0m: 服务器上已有其他服务 (如 Apache) 占用了 80 或 443 端口。")
+            print("      - \033[36m检查命令\033[0m: `sudo ss -tulpn | grep -E ':80|:443'`")
+            print("      - \033[36m解决方案\033[0m: 停止或卸载冲突的服务 (如 `sudo systemctl stop apache2`)。")
+            print("   2. \033[33m配置文件冲突\033[0m: Nginx 的其他配置文件 (`/etc/nginx/conf.d/` 或 `/etc/nginx/sites-enabled/`) 中有冲突的 `listen` 或 `server_name` 指令。")
+            print("      - \033[36m解决方案\033[0m: 暂时移走其他配置文件，只保留本脚本生成的 `hysteria2-ssl.conf`。")
             return False
-        
+        print("   - Nginx 配置测试通过，正在重启服务...")        
         subprocess.run(['sudo', 'systemctl', 'restart', 'nginx'], check=True)
         subprocess.run(['sudo', 'systemctl', 'enable', 'nginx'], check=True)
         
@@ -3955,8 +3963,8 @@ def get_current_user():
     return os.getenv('SUDO_USER', getpass.getuser())
 
 def create_and_enable_systemd_services(base_dir, binary_path, config_path):
-    """自动创建并启用 Systemd 服务"""
-    print("🚀 正在自动化配置 Systemd 服务...")
+    """自动创建并启用 Systemd 服务 (增强版)"""
+    print("🚀 正在自动化配置 Systemd 服务 (增强版)...")
     
     # 检查 systemctl 是否存在
     if not shutil.which('systemctl'):
@@ -3964,40 +3972,52 @@ def create_and_enable_systemd_services(base_dir, binary_path, config_path):
         return False
 
     try:
-        user = get_current_user()
-        home_dir = os.path.expanduser(f'~{user}')
+        # 使用 root 用户运行服务，更稳定，避免权限问题
+        # 使用绝对路径，避免环境差异
+        abs_binary_path = os.path.abspath(binary_path)
+        abs_config_path = os.path.abspath(config_path)
+        abs_base_dir = os.path.abspath(base_dir)
         python_executable = sys.executable  # 获取当前 Python 解释器的路径
+        fileserver_path = os.path.abspath(f"{base_dir}/config_server.py")
         
         # --- Hysteria2 主服务 ---
         hysteria_service_content = f"""[Unit]
 Description=Hysteria2 Proxy Server (Managed by script)
 After=network.target nginx.service
+Wants=nginx.service
 
 [Service]
 Type=simple
-User={user}
-WorkingDirectory={home_dir}/.hysteria2
-ExecStart={binary_path} server -c {config_path}
+User=root
+Group=root
+WorkingDirectory={abs_base_dir}
+ExecStart={abs_binary_path} server -c {abs_config_path}
 Restart=always
 RestartSec=5s
 LimitNOFILE=1048576
+# 增加日志输出到 systemd-journald，方便调试
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
 """
         # --- 配置文件下载服务 ---
-        fileserver_path = f"{base_dir}/config_server.py"
         fileserver_service_content = f"""[Unit]
 Description=Hysteria2 Config File Server (Managed by script)
 After=network.target
 
 [Service]
 Type=simple
-User={user}
-WorkingDirectory={home_dir}/.hysteria2
+User=root
+Group=root
+WorkingDirectory={abs_base_dir}
 ExecStart={python_executable} {fileserver_path}
 Restart=always
 RestartSec=5s
+# 增加日志输出到 systemd-journald
+StandardOutput=journal
+StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
@@ -4030,7 +4050,7 @@ WantedBy=multi-user.target
         
         print("✅ Systemd 服务配置成功！服务已由 Systemd 接管。")
         print("   使用 `sudo systemctl status hysteria-server` 查看主服务状态。")
-        print("   使用 `sudo systemctl status hysteria-fileserver` 查看文件服务状态。")
+        print("   使用 `sudo journalctl -u hysteria-server.service -f` 查看实时日志。")
         return True
 
     except Exception as e:
@@ -4051,7 +4071,7 @@ def remove_systemd_services():
                 subprocess.run(['sudo', 'systemctl', 'stop', service], check=False, capture_output=True)
                 subprocess.run(['sudo', 'systemctl', 'disable', service], check=False, capture_output=True)
                 print(f"   - 正在删除 {service_path}...")
-                subprocess.run(['sudo', 'rm', service_path], check=True)
+                subprocess.run(['sudo', 'rm', '-f', service_path], check=True)
             except Exception as e:
                 print(f"   - 清理 {service} 失败: {e}")
     try:
@@ -4062,4 +4082,4 @@ def remove_systemd_services():
         print(f"   - 重新加载 Systemd 配置失败: {e}")
 
 if __name__ == "__main__":
-    main() 
+    main()
