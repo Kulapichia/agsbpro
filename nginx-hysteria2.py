@@ -3191,93 +3191,129 @@ def setup_config_download_service(server_address, v2rayn_file, clash_file, hyste
     """设置配置文件下载服务 - 完全自动化"""
     try:
         print("🌐 设置配置文件下载服务...")
-        
+
         # 获取base_dir
         base_dir = os.path.expanduser("~/.hysteria2")
-        
         # 创建配置文件目录
         config_dir = f"{base_dir}/configs"
-        subprocess.run(['mkdir', '-p', config_dir], check=True)
-        
-        # 复制配置文件
-        subprocess.run(['cp', v2rayn_file, f'{config_dir}/v2rayn.yaml'], check=True)
-        subprocess.run(['cp', clash_file, f'{config_dir}/clash.yaml'], check=True)
-        subprocess.run(['cp', hysteria_official_file, f'{config_dir}/hysteria-official.yaml'], check=True)
-        subprocess.run(['cp', hysteria_client_hopping_file, f'{config_dir}/hysteria-client-hopping.yaml'], check=True)
-        subprocess.run(['cp', subscription_file, f'{config_dir}/v2rayn-subscription.txt'], check=True)
-        subprocess.run(['cp', subscription_plain_file, f'{config_dir}/multi-port-links.txt'], check=True)
-        subprocess.run(['cp', json_file, f'{config_dir}/hysteria2.json'], check=True)
-        
+        os.makedirs(config_dir, exist_ok=True)
+
+        # 同样复制所有文件
+        files_to_copy = {
+            v2rayn_file: f'{config_dir}/v2rayn.yaml',
+            clash_file: f'{config_dir}/clash.yaml',
+            hysteria_official_file: f'{config_dir}/hysteria-official.yaml',
+            hysteria_client_hopping_file: f'{config_dir}/hysteria-client-hopping.yaml',
+            subscription_file: f'{config_dir}/v2rayn-subscription.txt',
+            subscription_plain_file: f'{config_dir}/multi-port-links.txt',
+            json_file: f'{config_dir}/hysteria2.json'
+        }
+        for src, dest in files_to_copy.items():
+            if os.path.exists(src):
+                shutil.copy(src, dest)
+                
         # 直接启动Python HTTP服务器（不使用systemd）
         print("🔧 启动Python HTTP服务器...")
         
-        # 创建HTTP服务器脚本
+        # 创建更健壮的HTTP服务器脚本
+        # (使用 os.chdir 而不是 handler 的 directory 参数)
         server_script = f'''#!/usr/bin/env python3
 import os
 import http.server
 import socketserver
-from urllib.parse import urlparse
 
+# 这是一个更健壮的HTTP服务器，它首先切换到目标目录，
+# 然后启动一个标准请求处理器。这避免了与 `systemd` 
+# 和不同Python版本可能存在的兼容性问题。
 class ConfigHandler(http.server.SimpleHTTPRequestHandler):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory="{config_dir}", **kwargs)
-    
+    # 不需要自定义 __init__，它默认从当前工作目录提供文件
     def end_headers(self):
-        if hasattr(self, 'path') and self.path.endswith(('.yaml', '.yml', '.json')):
-            filename = os.path.basename(self.path)
+        # 功能：为特定文件添加下载头
+        path_lower = self.path.lower()
+        if path_lower.endswith(('.yaml', '.yml', '.json', '.txt')):
+            # 从原始路径获取文件名，以防url里有大小写区分
+            filename = os.path.basename(self.path)  
             self.send_header('Content-Disposition', f'attachment; filename="{{filename}}"')
-            self.send_header('Content-Type', 'application/octet-stream')
         super().end_headers()
-    
+
     def log_message(self, format, *args):
+        # 禁用烦人的日志输出，让systemd日志保持干净
         pass
 
 if __name__ == "__main__":
     PORT = 8080
+    TARGET_DIR = "{config_dir}" # 保留绝对路径以便直接运行
+
     try:
-        with socketserver.TCPServer(("", PORT), ConfigHandler) as httpd:
-            print(f"HTTP服务器已启动，端口: {{PORT}}")
-            httpd.serve_forever()
+        # 1. 首先尝试切换到目标目录
+        os.chdir(TARGET_DIR)
+        
+        # 2. 如果切换成功，从此目录启动HTTP服务
+        print(f"HTTP服务器正在目录 {{os.getcwd()}} 中启动...")
+        try:
+            with socketserver.TCPServer(("", PORT), ConfigHandler) as httpd:
+                print(f"HTTP服务器已在端口 {{PORT}} 上启动")
+                httpd.serve_forever()
+        except OSError as e:
+            if "Address already in use" in str(e):
+                print(f"错误: 端口 {{PORT}} 已被占用。服务器无法启动。")
+            else:
+                print(f"服务器启动时发生操作系统错误: {{e}}")
+            exit(1)
+
+    except FileNotFoundError:
+        print(f"错误: 目标目录不存在: '{{TARGET_DIR}}'")
+        exit(1)
     except Exception as e:
-        print(f"服务器启动失败: {{e}}")
+        print(f"发生未知错误: {{e}}")
         exit(1)
 '''
         
-        # 保存并启动服务器
         server_file = f"{base_dir}/config_server.py"
         with open(server_file, 'w', encoding='utf-8') as f:
             f.write(server_script)
         subprocess.run(['chmod', '+x', server_file], check=True)
+
+        # 检查防火墙规则是否存在，不存在则添加
+        iptables_check = subprocess.run(['sudo', 'iptables', '-C', 'INPUT', '-p', 'tcp', '--dport', '8080', '-j', 'ACCEPT'], check=False, capture_output=True)
+        if iptables_check.returncode != 0:
+            subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-p', 'tcp', '--dport', '8080', '-j', 'ACCEPT'], check=False)
+            print("🔗 已添加防火墙规则以允许端口 8080")
+            
+        # 当使用systemd时，不再需要脚本自己启动临时服务器
+        # 检查是否在systemd模式下
+        if not any(arg in sys.argv for arg in ['--no-systemd']):
+            print("✅ Python HTTP服务器设置完成 (将由Systemd管理)")
+            return True
         
-        # 开放防火墙端口（8080用于配置下载）
-        subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-p', 'tcp', '--dport', '8080', '-j', 'ACCEPT'], check=False)
-        
-        # 在后台启动HTTP服务器
-        subprocess.Popen(['python3', server_file], cwd=base_dir)
-        
-        # 等待服务启动
-        time.sleep(3)
-        
-        # 验证服务是否启动
+        # --- 以下代码仅在非systemd模式下执行 ---
+        print("🚀 (非Systemd模式) 正在启动临时HTTP服务器...")
         try:
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(2)
-            result = sock.connect_ex(('127.0.0.1', 8080))
-            sock.close()
-            if result == 0:
-                print("✅ Python HTTP服务器启动成功")
-                return True
-            else:
-                print("⚠️ HTTP服务器启动失败")
-                return False
+            # 杀掉可能存在的旧进程
+            subprocess.run(['pkill', '-f', 'config_server.py'], check=False)
+            time.sleep(1)
+            # 在后台启动HTTP服务器
+            subprocess.Popen(['python3', server_file], cwd=base_dir)
+        # 等待服务启动
+            time.sleep(2) # 等待启动
+            
+            # 验证服务
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.settimeout(2)
+                if sock.connect_ex(('127.0.0.1', 8080)) == 0:
+                    print("✅ Python HTTP服务器启动成功")
+                    return True
+                else:
+                    print("⚠️ HTTP服务器启动失败")
+                    return False
         except Exception as e:
-            print(f"⚠️ 验证HTTP服务器失败: {e}")
+            print(f"⚠️ 启动/验证HTTP服务器失败: {e}")
             return False
         
     except Exception as e:
         print(f"⚠️ 设置配置下载服务失败: {e}")
         return False
+
 
 def parse_port_range(port_range_str):
     """解析端口范围字符串"""
