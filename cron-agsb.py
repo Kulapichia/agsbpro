@@ -204,9 +204,9 @@ def print_info():
     print("\033[36m│                \033[33m✨ ArgoSB Python3 一键脚本 ✨               \033[36m│\033[0m")
     print("\033[36m├───────────────────────────────────────────────────────────────┤\033[0m")
     print("\033[36m│ \033[32m作者: 康康                                                  \033[36m│\033[0m")
-    print("\033[36m│ \033[32mGithub: https://github.com/zhumengkang/                    \033[36m│\033[0m")
-    print("\033[36m│ \033[32mYouTube: https://www.youtube.com/@康康的V2Ray与Clash         \033[36m│\033[0m")
-    print("\033[36m│ \033[32mTelegram: https://t.me/+WibQp7Mww1k5MmZl                   \033[36m│\033[0m")
+    print("\033[36m│ \033[32mGithub: https://github.com/Kulapichia/                    \033[36m│\033[0m")
+    print("\033[36m│ \033[32mYouTube: https://www.youtube.com/@ChupachiehChuanshuo         \033[36m│\033[0m")
+    print("\033[36m│ \033[32mTelegram: https://t.me/MallSpot                   \033[36m│\033[0m")
     print("\033[36m│ \033[32m版本: 25.5.30 (仅支持Python 3)                             \033[36m│\033[0m")
     print("\033[36m╰───────────────────────────────────────────────────────────────╯\033[0m")
 
@@ -541,9 +541,9 @@ def generate_links(domain, port_vm_ws, uuid_str):
         f.write("- 卸载脚本: `python3 agsb.py del`\n\n")
         
         f.write("## 注意事项\n\n")
-        f.write("- 该脚本由康康开发，更多信息请访问 [GitHub项目](https://github.com/zhumengkang/)\n")
-        f.write("- YouTube频道: [康康的V2Ray与Clash](https://www.youtube.com/@康康的V2Ray与Clash)\n")
-        f.write("- Telegram频道: [https://t.me/+WibQp7Mww1k5MmZl](https://t.me/+WibQp7Mww1k5MmZl)\n")
+        f.write("- 该脚本由康康开发，更多信息请访问 [GitHub项目](https://github.com/Kulapichia/)\n")
+        f.write("- YouTube频道: [康康的V2Ray与Clash](https://www.youtube.com/@ChupachiehChuanshuo)\n")
+        f.write("- Telegram频道: [https://t.me/MallSpot](https://t.me/MallSpot)\n")
     
     # 打印节点信息
     print("\033[36m╭───────────────────────────────────────────────────────────────╮\033[0m")
