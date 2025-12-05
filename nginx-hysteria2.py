@@ -218,8 +218,34 @@ def download_file(url, save_path, max_retries=3):
     return False
 
 def get_latest_version():
-    """返回固定的最新版本号 v2.6.1"""
-    return "v2.6.1"
+    """通过 GitHub API 动态获取最新的 Hysteria2 版本号"""
+    api_url = "https://api.github.com/repos/apernet/hysteria/releases/latest"
+    fallback_version = "v2.6.5"  # 定义一个备用版本，以防 API 请求失败
+
+    print("正在从 GitHub API 获取 Hysteria2 最新版本...")
+    try:
+        # 创建一个忽略SSL证书验证的上下文
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
+        headers = {'User-Agent': 'Python Hysteria2 Installer'}
+        req = urllib.request.Request(api_url, headers=headers)
+
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as response:
+            data = json.loads(response.read().decode())
+            tag_name = data.get("tag_name")
+            if tag_name and tag_name.startswith("app/"):
+                latest_version = tag_name.split('/')[-1]
+                print(f"✅ 成功获取最新版本: {latest_version}")
+                return latest_version
+            else:
+                raise ValueError("无法解析有效的 tag_name")
+
+    except Exception as e:
+        print(f"⚠️ 无法从 API 获取最新版本，将使用默认版本: {fallback_version}")
+        print(f"   错误详情: {e}")
+        return fallback_version
 
 def get_download_filename(os_name, arch):
     """根据系统和架构返回正确的文件名"""
