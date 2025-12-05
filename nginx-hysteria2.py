@@ -1235,78 +1235,54 @@ def delete_hysteria2():
         print(f"⚠️ 停止服务失败: {e}")
     
     # 2. 清理iptables规则
-    print("\n🔧 步骤2: 清理iptables规则")
+    print("\n🔧 步骤2: 清理iptables规则 (智能模式)")
     try:
-        port_ranges = []
-        
-        # 从配置文件读取端口信息
+        listen_port = None
         config_path = f"{base_dir}/config/config.json"
         if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r') as f:
-                    config = json.load(f)
-                listen_port = int(config.get('listen', ':443').replace(':', ''))
-                
-                # 计算可能的端口范围
-                port_start = max(1024, listen_port - 25)
-                port_end = min(65535, listen_port + 25)
-                if listen_port < 1049:
-                    port_start = 1024
-                    port_end = 1074
-                
-                port_ranges.append((port_start, port_end, listen_port))
-                print(f"📋 从配置文件读取端口信息: {port_start}-{port_end} → {listen_port}")
-            except:
-                pass
-    
-        # 添加常见端口范围以确保清理完整
-        common_ranges = [
-            (1024, 1074, 443),
-            (28888, 29999, 443),
-            (10000, 10050, 443),
-            (20000, 20050, 443)
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            listen_port_str = config.get('listen', ':443')
+            # 使用正则表达式从 ":port" 格式中提取端口号
+            match = re.search(r':(\d+)', listen_port_str)
+            if match:
+                listen_port = int(match.group(1))
+
+        if listen_port:
+            print(f"   - 从配置中读取到监听端口: {listen_port}")
+            # 使用iptables-save和grep查找所有转发到此端口的规则
+            result = subprocess.run(['sudo', 'iptables-save', '-t', 'nat'], capture_output=True, text=True)
+            if result.returncode == 0:
+                lines = result.stdout.splitlines()
+                for line in lines:
+                    if f'DNAT --to-destination :{listen_port}' in line:
+                        # 找到规则，将其从 -A PREROUTING (添加) 变为 -D PREROUTING (删除)
+                        # 并移除链名，因为 -D 命令需要它作为参数
+                        delete_rule_parts = line.replace('-A PREROUTING', '').strip().split()
+                        print(f"   - 正在删除iptables NAT规则: {' '.join(delete_rule_parts)}")
+                        subprocess.run(['sudo', 'iptables', '-t', 'nat', '-D', 'PREROUTING'] + delete_rule_parts, check=False)
+
+        # 执行通用的INPUT规则清理（作为备用，覆盖所有情况）
+        print("   - 正在执行通用INPUT规则清理...")
+        common_ranges_for_input = [
+            (1024, 1074), (28888, 29999), (10000, 10050), (20000, 20050)
         ]
-        port_ranges.extend(common_ranges)
+        if listen_port:
+             common_ranges_for_input.append((listen_port, listen_port)) # 单独清理监听端口
         
-        # 清理iptables规则
-        for port_start, port_end, listen_port in port_ranges:
-            try:
-                # 删除NAT规则
-                subprocess.run([
-                    'sudo', 'iptables', '-t', 'nat', '-D', 'PREROUTING',
-                    '-p', 'udp', '--dport', f'{port_start}:{port_end}',
-                    '-j', 'DNAT', '--to-destination', f':{listen_port}'
-                ], check=False, capture_output=True)
-                
-                # 删除INPUT规则
-                subprocess.run([
-                    'sudo', 'iptables', '-D', 'INPUT',
-                    '-p', 'udp', '--dport', f'{port_start}:{port_end}',
-                    '-j', 'ACCEPT'
-                ], check=False, capture_output=True)
-                
-                # 删除单端口规则
-                subprocess.run([
-                    'sudo', 'iptables', '-D', 'INPUT',
-                    '-p', 'udp', '--dport', str(listen_port),
-                    '-j', 'ACCEPT'
-                ], check=False, capture_output=True)
-                
-            except:
-                pass
+        for start, end in common_ranges_for_input:
+            subprocess.run(['sudo', 'iptables', '-D', 'INPUT', '-p', 'udp', '--dport', f'{start}:{end}', '-j', 'ACCEPT'], check=False, capture_output=True)
         
         # 保存iptables规则
-        try:
-            subprocess.run(['sudo', 'iptables-save'], check=True, capture_output=True)
-            subprocess.run(['sudo', 'netfilter-persistent', 'save'], check=False, capture_output=True)
-        except:
+        if shutil.which('netfilter-persistent'):
+            subprocess.run(['sudo', 'netfilter-persistent', 'save'], check=False)
+        elif shutil.which('service'):
             try:
-                subprocess.run(['sudo', 'service', 'iptables', 'save'], check=False, capture_output=True)
-            except:
-                pass
-        
+                 subprocess.run(['sudo', 'service', 'iptables', 'save'], check=False)
+            except FileNotFoundError: # 'service' 命令可能不存在
+                 pass
+
         print("✅ iptables规则清理完成")
-        
     except Exception as e:
         print(f"⚠️ 清理iptables规则失败: {e}")
     
@@ -3038,11 +3014,7 @@ def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key
         
         # 2. 找到nginx Web目录
         nginx_web_dirs = ["/var/www/html", "/usr/share/nginx/html", "/var/www"]
-        nginx_web_dir = None
-        for dir_path in nginx_web_dirs:
-            if os.path.exists(dir_path):
-                nginx_web_dir = dir_path
-                break
+        nginx_web_dir = next((d for d in nginx_web_dirs if os.path.exists(d)), None)
         
         if not nginx_web_dir:
             nginx_web_dir = "/var/www/html"
@@ -3055,44 +3027,53 @@ def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key
         
         # 4. 配置nginx SSL
         ssl_conf = f"""server {{
-    listen 443 ssl;
-    listen [::]:443 ssl;
-    server_name _;
+    listen 443 ssl http2 default_server;
+    listen [::]:443 ssl http2 default_server;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+
+    server_name _; # 作为默认服务器，捕获所有未匹配的请求
+
+    # 如果是HTTP请求，重定向到HTTPS
+    if ($scheme = http) {{
+        return 301 https://$host$request_uri;
+    }}
     
     ssl_certificate {os.path.abspath(cert_path)};
     ssl_certificate_key {os.path.abspath(key_path)};
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-AES256-GCM-SHA384;
-    
+    ssl_prefer_server_ciphers off;    
     root {nginx_web_dir};
     index index.html;
     
     location / {{
-        try_files $uri $uri/ /index.html;
+        try_files $uri $uri/ =404;
     }}
     
     server_tokens off;
     add_header X-Frame-Options DENY always;
     add_header X-Content-Type-Options nosniff always;
-}}
 
-server {{
-    listen 80;
-    listen [::]:80;
-    server_name _;
-    return 301 https://$server_name$request_uri;
 }}"""
         
-        # 5. 写入nginx配置
-        ssl_conf_file = "/etc/nginx/conf.d/hysteria2-ssl.conf"
-        import tempfile
-        # 确保目录存在
-        subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(ssl_conf_file)], check=True)
+        # 5. 清理并写入新的nginx配置
+        print("   - 正在清理可能冲突的Nginx默认配置...")
+        # 移除默认的 enabled-site，这是最常见的冲突源
+        subprocess.run(['sudo', 'rm', '-f', '/etc/nginx/sites-enabled/default'], check=False)
+        # 删除脚本可能创建的旧配置文件
+        subprocess.run(['sudo', 'rm', '-f', '/etc/nginx/conf.d/hysteria2-ssl.conf'], check=False)
+
+        # 写入新的、高优先级的Nginx配置
+        ssl_conf_file = "/etc/nginx/conf.d/00-hysteria2-default.conf" # 使用一个高优先级的默认配置文件
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
             tmp.write(ssl_conf)
             tmp.flush()
+            # **不再覆盖主配置文件**，而是创建或覆盖专用的站点配置文件
             subprocess.run(['sudo', 'cp', tmp.name, ssl_conf_file], check=True)
             os.unlink(tmp.name)
+            
+        print(f"   - ✅ 已创建唯一的默认配置文件: {ssl_conf_file}")
         
         # 6. 测试并重启nginx
         print("   - 正在测试 Nginx 配置...")
@@ -3105,7 +3086,7 @@ server {{
             print("      - \033[36m检查命令\033[0m: `sudo ss -tulpn | grep -E ':80|:443'`")
             print("      - \033[36m解决方案\033[0m: 停止或卸载冲突的服务 (如 `sudo systemctl stop apache2`)。")
             print("   2. \033[33m配置文件冲突\033[0m: Nginx 的其他配置文件 (`/etc/nginx/conf.d/` 或 `/etc/nginx/sites-enabled/`) 中有冲突的 `listen` 或 `server_name` 指令。")
-            print("      - \033[36m解决方案\033[0m: 暂时移走其他配置文件，只保留本脚本生成的 `hysteria2-ssl.conf`。")
+            print("      - \033[36m解决方案\033[0m: 暂时移走其他配置文件，只保留本脚本生成的 `00-hysteria2-default.conf`。")
             return False
         print("   - Nginx 配置测试通过，正在重启服务...")        
         subprocess.run(['sudo', 'systemctl', 'restart', 'nginx'], check=True)
