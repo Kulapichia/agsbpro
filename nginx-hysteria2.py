@@ -2999,6 +2999,55 @@ def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key
     """
     配置nginx Web伪装的简化版本
     """
+    # ====== 多路径智能模式检测 ======
+    # 定义所有可能的Nginx主配置文件路径
+    possible_nginx_configs = [
+        "/etc/nginx/nginx.conf",       # Debian, Ubuntu, etc.
+        "/usr/local/nginx/conf/nginx.conf", # Compiled from source default
+        "/usr/local/etc/nginx/nginx.conf",  # Homebrew on macOS
+        "/opt/homebrew/etc/nginx/nginx.conf", # Homebrew on Apple Silicon macOS
+        "/etc/nginx/conf/nginx.conf"       # 某些特殊配置或拼写错误
+    ]
+    
+    found_config_path = None
+    for config_path in possible_nginx_configs:
+        path_obj = Path(config_path)
+        if path_obj.exists() and path_obj.stat().st_size > 10: # 文件存在且大于10字节，避免空文件
+            found_config_path = str(path_obj)
+            break # 找到第一个就停止搜索
+
+    if found_config_path:
+        print(f"🔍 检测到已存在的Nginx主配置文件: {found_config_path}")
+        print("🤝 将以【协同模式】运行，不会覆盖您的主配置或自动安装Nginx。")
+        print("💡 请确保您的Nginx配置已正确设置，能够处理伪装网站的流量。")
+        print("   - 伪装网站根目录: " + os.path.abspath(web_dir))
+        print("   - SSL证书路径: " + os.path.abspath(cert_path))
+        print("   - SSL私钥路径: " + os.path.abspath(key_path))
+        
+        # 在协同模式下，我们只确保nginx服务在运行，然后重载它以应用可能的更改
+        try:
+            # 检查Nginx是否在运行
+            if subprocess.run(['pgrep', '-x', 'nginx'], capture_output=True).returncode != 0:
+                print("⚠️  警告: 检测到Nginx配置文件，但Nginx服务未在运行。")
+                print("   请手动启动Nginx: sudo systemctl start nginx")
+                return True # 即使服务未运行，也视为协同模式，不自动配置
+
+            print("🔄 正在尝试重载Nginx以确保配置生效...")
+            test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+            if test_result.returncode != 0:
+                print("⚠️  警告: 您当前的Nginx配置测试失败，重载可能会失败。")
+                print("\033[91m" + test_result.stderr.strip() + "\033[0m")
+                # 即使测试失败也继续，因为Hysteria2不依赖Nginx
+            else:
+                subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+                print("✅ Nginx配置已成功重载。")
+            return True # 直接返回成功，跳过后续所有自动配置
+        except Exception as e:
+            print(f"⚠️  重载Nginx时出错: {e}。请手动检查Nginx配置。")
+            return True # 同样返回True，不中断主流程
+    
+    print("🚀 未检测到用户自定义Nginx主配置，将以【全自动模式】运行。")
+
     try:
         print("🔧 配置nginx Web伪装...")
         
