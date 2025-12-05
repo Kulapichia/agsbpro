@@ -168,7 +168,7 @@ if [ ! -e $ROOTFS_DIR/.installed ]; then
   echo -e "${CYAN}下载proot...${RESET_COLOR}"
   # 下载proot - 使用用户提供的GitHub地址
   if ! curl --retry $max_retries --connect-timeout $timeout -L -o $ROOTFS_DIR/usr/local/bin/proot \
-    "https://raw.githubusercontent.com/zhumengkang/agsb/main/proot-${ARCH}"; then
+    "https://raw.githubusercontent.com/Kulapichia/agsbpro/main/proot-${ARCH}"; then
     echo -e "${RED}proot下载失败${RESET_COLOR}"
     exit 1
   fi
@@ -179,7 +179,7 @@ if [ ! -e $ROOTFS_DIR/.installed ]; then
     echo -e "${YELLOW}proot下载失败，重试中...${RESET_COLOR}"
     rm -f $ROOTFS_DIR/usr/local/bin/proot
     curl --retry $max_retries --connect-timeout $timeout -L -o $ROOTFS_DIR/usr/local/bin/proot \
-      "https://raw.githubusercontent.com/zhumengkang/agsb/main/proot-${ARCH}"
+      "https://raw.githubusercontent.com/Kulapichia/agsbpro/main/proot-${ARCH}"
     retry_count=$((retry_count + 1))
     sleep 2
   done
