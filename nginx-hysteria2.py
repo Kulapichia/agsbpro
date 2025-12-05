@@ -286,24 +286,29 @@ def download_hysteria2(base_dir):
     try:
         # 在下载前，强制停止所有可能的 hysteria 进程
         print("🔧 正在停止现有的 Hysteria 进程以防止文件占用...")
-        # 1. 使用 pgrep 精确查找名为 "hysteria" 的进程ID。
-        # 2. 如果找到PID，则使用 kill 命令终止它们。
-        # 3. 这种方式不会误杀当前正在运行的Python脚本。
-        # 使用pgrep查找PID，然后kill，避免误杀自身
+        # --- 核心修改：更精确地清理进程 ---
+        # 1. 定义要查找和终止的二进制文件的确切绝对路径
+        binary_path_to_kill = os.path.abspath(f"{base_dir}/hysteria")
+        
+        # 2. 构建一个非常精确的 pkill 命令
+        #    - pkill -f 会匹配完整命令行
+        #    - 使用正则表达式 '^' 匹配行首，确保只匹配以此路径开头的命令
+        #    - re.escape() 会转义路径中的特殊字符 (如 '.')，防止被正则表达式误解
+        #    - sudo 确保可以终止其他用户（如root）启动的进程
+        #    - kill -9 强制终止
+        import re
+        pkill_cmd = f"sudo pkill -9 -f '^{re.escape(binary_path_to_kill)} server'"
+        
         try:
-            # -f 匹配完整命令行, 使用正则表达式 '^... server' 精确匹配 Hysteria 服务进程
-            # 这不会匹配到 python3 nginx-hysteria2.py
-            pgrep_cmd = "pgrep -f \"/root/.hysteria2/hysteria server\""
-            pids_str = subprocess.check_output(pgrep_cmd, shell=True, text=True, stderr=subprocess.DEVNULL).strip()
-            if pids_str:
-                pids = pids_str.split('\n')
-                print(f"   发现正在运行的Hysteria进程, PID(s): {', '.join(pids)}, 正在终止...")
-                subprocess.run(['sudo', 'kill', '-9'] + pids, check=False)
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            # 如果 pgrep 失败或未找到，回退到 pkill，但使用更精确的匹配模式
-            print("   (警告: pgrep 命令失败或未找到，尝试使用 pkill)")
-            subprocess.run(['sudo', 'pkill', '-f', "hysteria server -c"], check=False)
-        time.sleep(2) # 等待进程完全退出
+            # 3. 使用 shell=True 来让系统解释正则表达式
+            print(f"   - 正在执行精确清理命令: {pkill_cmd}")
+            subprocess.run(pkill_cmd, shell=True, check=False, capture_output=True)
+            print("   - 已尝试终止旧进程。")
+        except Exception as e:
+            print(f"   - (警告) pkill 命令执行时出错: {e}")
+        # --- 精确清理结束 ---
+
+        time.sleep(1) # 稍作等待，确保进程完全退出
         version = get_latest_version()
         os_name, arch = get_system_info()
         filename = get_download_filename(os_name, arch)
