@@ -78,10 +78,10 @@ cd ~ && curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-
 
 ```bash
 # 方式一：wget下载
-wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py
+wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-hysteria2.py
 
 # 方式二：curl下载
-curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/nginx-hysteria2.py
+curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-hysteria2.py
 ```
 
 #### ⚡ 最简部署
@@ -706,16 +706,16 @@ sudo ufw allow 8080/tcp
 
 ```bash
 # 免费vps免root一键安装hysteria2
-cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/hysteria2-v1.py | python3 -
+cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/hysteria2-v1.py | python3 -
 
 # 免费vps免root一键安装vmess
-cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/agsb-v2.py | python3 - install --uuid b1ebd5fc-9170-45d4-9887-a39c9fc65298 --port 49999 --agk CF-token --domain 自己的域名
+cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/agsb-v2.py | python3 - install --uuid b1ebd5fc-9170-45d4-9887-a39c9fc65298 --port 49999 --agk CF-token --domain 自己的域名
 
 # wget方式下载
-cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/agsb.py && python3 agsb.py install
+cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/agsb.py && python3 agsb.py install
 
 # curl方式下载
-cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/agsb.py | python3 -
+cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/agsb.py | python3 -
 ```
 
 #### 🎯 基础操作
@@ -745,7 +745,7 @@ python3 agsb.py
 #### 💻 固定域名安装
 
 ```bash
-cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/agsb-v2.py | python3 - install --uuid b1ebd5fc-9170-45d4-9887-a39c9fc65298 --port 49999 --agk CF-token --domain 自己的域名
+cd ~ && curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/agsb-v2.py | python3 - install --uuid b1ebd5fc-9170-45d4-9887-a39c9fc65298 --port 49999 --agk CF-token --domain 自己的域名
 ```
 
 ### 📁 文件结构
@@ -812,23 +812,23 @@ pip install requests
 
 ```bash
 # 使用curl - 默认URL
-curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/cron-glitch.py | python3 -
+curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/cron-glitch.py | python3 -
 
 # 使用curl - 指定URL
-curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/cron-glitch.py | python3 - -u https://your-project-name.glitch.me
+curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/cron-glitch.py | python3 - -u https://your-project-name.glitch.me
 
 # 使用curl - 指定URL和访问间隔
-curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/cron-glitch.py | python3 - --url https://your-project-name.glitch.me --interval 30-180
+curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/cron-glitch.py | python3 - --url https://your-project-name.glitch.me --interval 30-180
 ```
 
 #### 📥 下载方式
 
 ```bash
 # 使用wget下载
-wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/cron-glitch.py -O glitch.py
+wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/cron-glitch.py -O glitch.py
 
 # 使用curl下载
-curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/cron-glitch.py -o glitch.py
+curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/cron-glitch.py -o glitch.py
 ```
 
 #### 🎯 基本使用
@@ -922,10 +922,10 @@ tail -f glitch.log
 
 ```bash
 # wget方式
-cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/root.sh && chmod +x root.sh && ./root.sh
+cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/root.sh && chmod +x root.sh && ./root.sh
 
 # curl方式
-cd ~ && curl -sSL https://raw.githubusercontent.com/Kulapichia/agsbpro/refs/heads/main/root.sh -o root.sh && chmod +x root.sh && ./root.sh
+cd ~ && curl -sSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/root.sh -o root.sh && chmod +x root.sh && ./root.sh
 ```
 
 ### 🎯 功能特点
