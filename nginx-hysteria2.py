@@ -1405,7 +1405,7 @@ def delete_hysteria2():
     return True
 
 def show_status():
-    """显示Hysteria2状态"""
+    """显示Hysteria2状态（智能识别Systemd模式）"""
     home = get_user_home()
     base_dir = f"{home}/.hysteria2"
     
@@ -1413,20 +1413,38 @@ def show_status():
         print("Hysteria2 未安装")
         return
     
-    # 检查服务状态
-    pid_file = f"{base_dir}/hysteria.pid"
-    if os.path.exists(pid_file):
-        try:
-            with open(pid_file, 'r') as f:
-                pid = f.read().strip()
-            if os.path.exists(f"/proc/{pid}"):
-                print(f"服务状态: 运行中 (PID: {pid})")
-            else:
-                print("服务状态: 已停止")
-        except:
-            print("服务状态: 未知")
-    else:
-        print("服务状态: 未运行")
+    # 优先检查 systemd 服务状态
+    systemd_active = False
+    try:
+        # 使用 --quiet 来抑制非0退出码的输出
+        result = subprocess.run(['systemctl', 'is-active', '--quiet', 'hysteria-server.service'])
+        if result.returncode == 0:
+            systemd_active = True
+            print("✅ 服务状态: \033[32m运行中 (由 Systemd 管理)\033[0m")
+            # 显示更详细的 Systemd 状态
+            subprocess.run(['systemctl', 'status', 'hysteria-server.service', '--no-pager'])
+    except FileNotFoundError:
+        # systemctl 命令不存在
+        pass
+    except Exception as e:
+        print(f"检查 systemd 状态时出错: {e}")
+
+    # 如果 systemd 服务未运行，则回退到检查 PID 文件（非 Systemd 模式）
+    if not systemd_active:
+        pid_file = f"{base_dir}/hysteria.pid"
+        if os.path.exists(pid_file):
+            try:
+                with open(pid_file, 'r') as f:
+                    pid = f.read().strip()
+                # 使用ps命令检查PID是否存在，更通用
+                if pid and subprocess.run(['ps', '-p', pid], capture_output=True).returncode == 0:
+                    print(f"✅ 服务状态: \033[32m运行中 (PID: {pid}, 临时模式)\033[0m")
+                else:
+                    print("❌ 服务状态: \033[31m已停止\033[0m")
+            except Exception as e:
+                print(f"⚠️ 服务状态: 未知 (读取PID文件出错: {e})")
+        else:
+            print("❌ 服务状态: \033[31m未运行 (未找到 systemd 服务或 PID 文件)\033[0m")
     
     # 显示配置信息
     config_path = f"{base_dir}/config/config.json"
@@ -1434,26 +1452,31 @@ def show_status():
         try:
             with open(config_path, 'r') as f:
                 config = json.load(f)
-            print("\n配置信息:")
-            print(f"监听端口: {config['listen']}")
-            print(f"认证方式: {config['auth']['type']}")
+            print("\n\033[1m配置信息:\033[0m")
+            print(f"  监听端口: {config['listen']}")
+            print(f"  认证方式: {config['auth']['type']}")
             if 'bandwidth' in config:
-                print(f"上行带宽: {config['bandwidth']['up']}")
-                print(f"下行带宽: {config['bandwidth']['down']}")
+                print(f"  上行带宽: {config['bandwidth']['up']}")
+                print(f"  下行带宽: {config['bandwidth']['down']}")
         except:
-            print("无法读取配置文件")
+            print("⚠️ 无法读取配置文件")
     
-    # 显示日志
-    log_path = f"{base_dir}/logs/hysteria.log"
-    if os.path.exists(log_path):
-        print("\n最近日志:")
-        try:
-            with open(log_path, 'r') as f:
-                logs = f.readlines()
-                for line in logs[-10:]:  # 显示最后10行
-                    print(line.strip())
-        except:
-            print("无法读取日志文件")
+    # 智能显示日志
+    print("\n\033[1m最近日志:\033[0m")
+    if systemd_active:
+        print(" (日志由 Systemd Journal 管理)")
+        subprocess.run(['journalctl', '-u', 'hysteria-server.service', '-n', '10', '--no-pager'])
+    else:
+        log_path = f"{base_dir}/logs/hysteria.log"
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, 'r') as f:
+                    # 使用 subprocess tail 以确保只读取最后几行，避免大文件问题
+                    subprocess.run(['tail', '-n', '10', log_path])
+            except:
+                print("⚠️ 无法读取日志文件")
+        else:
+            print(" (未找到日志文件)")
 
 def start_service(start_script, port, base_dir):
     """启动服务并等待服务成功运行"""
