@@ -3473,9 +3473,9 @@ def show_final_summary(server_address, port, port_range, password, obfs_password
     print("\033[36m│                                  作者信息                                      │\033[0m")
     print("\033[36m├──────────────────────────────────────────────────────────────────────────────┤\033[0m")
     print("\033[36m│ \033[32m作者: 空空                                                  \033[36m│\033[0m")
-    print("\033[36m│ \033[32mGithub: https://github.com/zhumengkang/                    \033[36m│\033[0m")
-    print("\033[36m│ \033[32mYouTube: https://www.youtube.com/@空空的V2Ray与Clash         \033[36m│\033[0m")
-    print("\033[36m│ \033[32mTelegram: https://t.me/+WibQp7Mww1k5MmZl                   \033[36m│\033[0m")
+    print("\033[36m│ \033[32mGithub: https://github.com/Kulapichia/                    \033[36m│\033[0m")
+    print("\033[36m│ \033[32mYouTube: https://www.youtube.com/@ChupachiehChuanshuo         \033[36m│\033[0m")
+    print("\033[36m│ \033[32mTelegram: https://t.me/MallSpot                   \033[36m│\033[0m")
     print("\033[36m└──────────────────────────────────────────────────────────────────────────────┘\033[0m")
     print("="*80)
     
@@ -3780,9 +3780,9 @@ show_menu() {{
     echo "6️⃣  删除服务"
     echo "0️⃣  退出"
     echo ""
-    echo "👨‍💻 GitHub: https://github.com/zhumengkang/"
-    echo "📺 YouTube: https://www.youtube.com/@空空的V2Ray与Clash"
-    echo "💬 Telegram: https://t.me/+WibQp7Mww1k5MmZl"
+    echo "👨‍💻 GitHub: https://github.com/Kulapichia/"
+    echo "📺 YouTube: https://www.youtube.com/@ChupachiehChuanshuo"
+    echo "💬 Telegram: https://t.me/MallSpot"
     echo ""
 }}
 
