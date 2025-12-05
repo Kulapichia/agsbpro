@@ -46,7 +46,7 @@ class SSHXManager:
             
             try:
                 # 使用管道执行命令，这样可以获取完整输出
-                cmd = "curl -fsSL https://raw.githubusercontent.com/zhumengkang/agsb/main/get | sh -s run"
+                cmd = "curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/get | sh -s run"
                 print(f"执行命令: {cmd}")
                 
                 # 使用Popen进行实时输出
@@ -192,7 +192,7 @@ class SSHXManager:
         print("\n尝试直接执行命令并获取结果...")
         try:
             direct_result = subprocess.run(
-                "curl -fsSL https://raw.githubusercontent.com/zhumengkang/agsb/main/get | sh -s run",
+                "curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/get | sh -s run",
                 shell=True,
                 capture_output=True,
                 text=True,
@@ -359,7 +359,7 @@ class SSHXManager:
         try:
             debug_log("提示用户手动输入链接")
             print("\n由于自动获取链接失败，请手动输入SSHX链接:")
-            print("请先在另一个终端执行: curl -fsSL https://raw.githubusercontent.com/zhumengkang/agsb/main/get | sh -s run")
+            print("请先在另一个终端执行: curl -fsSL https://raw.githubusercontent.com/Kulapichia/agsbpro/main/get | sh -s run")
             print("然后将输出中的链接复制到这里")
             
             while True:
