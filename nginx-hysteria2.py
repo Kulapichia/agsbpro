@@ -3472,9 +3472,9 @@ def show_final_summary(server_address, port, port_range, password, obfs_password
     print("\033[36m┌──────────────────────────────────────────────────────────────────────────────┐\033[0m")
     print("\033[36m│                                  作者信息                                      │\033[0m")
     print("\033[36m├──────────────────────────────────────────────────────────────────────────────┤\033[0m")
-    print("\033[36m│ \033[32m作者: 康康                                                  \033[36m│\033[0m")
+    print("\033[36m│ \033[32m作者: 空空                                                  \033[36m│\033[0m")
     print("\033[36m│ \033[32mGithub: https://github.com/zhumengkang/                    \033[36m│\033[0m")
-    print("\033[36m│ \033[32mYouTube: https://www.youtube.com/@康康的V2Ray与Clash         \033[36m│\033[0m")
+    print("\033[36m│ \033[32mYouTube: https://www.youtube.com/@空空的V2Ray与Clash         \033[36m│\033[0m")
     print("\033[36m│ \033[32mTelegram: https://t.me/+WibQp7Mww1k5MmZl                   \033[36m│\033[0m")
     print("\033[36m└──────────────────────────────────────────────────────────────────────────────┘\033[0m")
     print("="*80)
@@ -3522,7 +3522,7 @@ def save_global_config(server_address, port, port_range, password, obfs_password
         # 创建kk命令脚本
         kk_script_content = f'''#!/bin/bash
 # Hysteria2 管理工具
-# 作者: 康康
+# 作者: 空空
 
 CONFIG_FILE="{config_file}"
 BASE_DIR="$HOME/.hysteria2"
@@ -3626,13 +3626,27 @@ show_service_status() {{
     echo "║                           📊 服务状态                                        ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     
-    # 检查Hysteria2进程
-    if pgrep -f "hysteria" > /dev/null; then
-        echo "✅ Hysteria2服务: 运行中"
-        echo "   进程ID: $(pgrep -f hysteria)"
+    # 优先检查 Systemd 服务
+    if command -v systemctl >/dev/null && systemctl is-active --quiet hysteria-server.service; then
+        echo "✅ Hysteria2服务: 运行中 (由 Systemd 管理)"
+        systemctl status hysteria-server.service --no-pager
+    elif [ -f "$BASE_DIR/hysteria.pid" ] && pgrep -F "$BASE_DIR/hysteria.pid" > /dev/null; then
+        echo "✅ Hysteria2服务: 运行中 (PID: $(cat "$BASE_DIR/hysteria.pid"), 临时模式)"
     else
         echo "❌ Hysteria2服务: 未运行"
     fi
+    echo "" # 添加空行分隔
+
+    # 检查文件下载服务
+    if command -v systemctl >/dev/null && systemctl is-active --quiet hysteria-fileserver.service; then
+        echo "✅ 文件下载服务: 运行中 (由 Systemd 管理)"
+    elif pgrep -f "config_server.py" > /dev/null; then
+        echo "✅ 文件下载服务: 运行中 (临时模式)"
+    else
+        echo "❌ 文件下载服务: 未运行"
+    fi
+    
+    echo "" # 添加空行分隔
     
     # 检查nginx进程
     if pgrep -f "nginx" > /dev/null; then
@@ -3642,22 +3656,22 @@ show_service_status() {{
     fi
     
     # 检查端口监听
+    echo ""
+    echo "🔍 端口监听状态:"
     load_config
-    if [ "$PORT" != "N/A" ]; then
-        if netstat -ulnp 2>/dev/null | grep ":$PORT " > /dev/null; then
-            echo "✅ UDP端口 $PORT: 监听中"
-        else
-            echo "❌ UDP端口 $PORT: 未监听"
-        fi
+    if [ "$PORT" != "N/A" ] && ss -ulnp 2>/dev/null | grep -q ":$PORT "; then
+        echo "✅ UDP端口 $PORT: 监听中"
+    else
+        echo "❌ UDP端口 $PORT: 未监听"
     fi
     
-    if netstat -tlnp 2>/dev/null | grep ":443 " > /dev/null; then
+    if ss -tlnp 2>/dev/null | grep -q ":443 "; then
         echo "✅ TCP端口 443: 监听中 (nginx)"
     else
         echo "❌ TCP端口 443: 未监听"
     fi
     
-    if netstat -tlnp 2>/dev/null | grep ":8080 " > /dev/null; then
+    if ss -tlnp 2>/dev/null | grep -q ":8080 "; then
         echo "✅ TCP端口 8080: 监听中 (配置下载)"
     else
         echo "❌ TCP端口 8080: 未监听"
@@ -3698,14 +3712,21 @@ show_logs() {{
     echo "║                           📋 查看日志                                        ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     
-    if [ -f "$BASE_DIR/logs/hysteria.log" ]; then
+    # 优先使用 journalctl 查看 Systemd 日志
+    if command -v journalctl >/dev/null && systemctl list-units --full -all | grep -q "hysteria-server.service"; then
+        echo "📄 日志由 Systemd Journal 管理。显示最新50行日志:"
+        echo "----------------------------------------"
+        journalctl -u hysteria-server.service -n 50 --no-pager
+        echo "----------------------------------------"
+        echo "💡 实时查看日志: journalctl -u hysteria-server.service -f"
+    elif [ -f "$BASE_DIR/logs/hysteria.log" ]; then
         echo "📄 显示最新50行日志:"
         echo "----------------------------------------"
         tail -n 50 "$BASE_DIR/logs/hysteria.log"
         echo "----------------------------------------"
         echo "💡 实时查看日志: tail -f $BASE_DIR/logs/hysteria.log"
     else
-        echo "❌ 日志文件不存在: $BASE_DIR/logs/hysteria.log"
+        echo "❌ 日志文件不存在: $BASE_DIR/logs/hysteria.log (或服务未以临时模式运行)"
     fi
 }}
 
@@ -3747,7 +3768,7 @@ show_menu() {{
     echo "╔══════════════════════════════════════════════════════════════════════════════╗"
     echo "║                         🚀 Hysteria2 管理工具                                ║"
     echo "╠══════════════════════════════════════════════════════════════════════════════╣"
-    echo "║                              作者: 康康                                      ║"
+    echo "║                              作者: 空空                                      ║"
     echo "╚══════════════════════════════════════════════════════════════════════════════╝"
     echo ""
     echo "请选择操作："
@@ -3760,7 +3781,7 @@ show_menu() {{
     echo "0️⃣  退出"
     echo ""
     echo "👨‍💻 GitHub: https://github.com/zhumengkang/"
-    echo "📺 YouTube: https://www.youtube.com/@康康的V2Ray与Clash"
+    echo "📺 YouTube: https://www.youtube.com/@空空的V2Ray与Clash"
     echo "💬 Telegram: https://t.me/+WibQp7Mww1k5MmZl"
     echo ""
 }}
