@@ -2649,11 +2649,19 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
         else:
             print("⚠️ BBR优化失败，但不影响主要功能")
     
-    # 9. 创建并启动Hysteria2服务
-    start_script = create_service_script(base_dir, binary_path, config_path, port)
-    service_started = start_service(start_script, port, base_dir)
-    if service_started:
-        print(f"✅ Hysteria2服务启动成功")
+    # 9. 创建并启动Hysteria2服务 (修改为 Systemd 方式)
+    # start_script = create_service_script(base_dir, binary_path, config_path, port) # 不再需要临时脚本
+    # service_started = start_service(start_script, port, base_dir) # 注释掉临时的 nohup 启动方式
+    # if service_started:
+    #     print(f"✅ Hysteria2服务启动成功")
+    
+    # 新增: 自动化配置 Systemd 服务，如果失败则回退到 nohup
+    systemd_success = create_and_enable_systemd_services(base_dir, binary_path, config_path)
+    if not systemd_success:
+        # 如果 Systemd 配置失败，则执行原有的 nohup 启动方式作为备选方案
+        print("   -> ⚠️ Systemd 配置失败，回退到临时的 nohup 启动方式...")
+        start_script = create_service_script(base_dir, binary_path, config_path, port)
+        start_service(start_script, port, base_dir)
     
     # 10. 配置nginx Web伪装
     nginx_success = setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key_path, port)
