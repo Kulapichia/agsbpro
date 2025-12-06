@@ -629,9 +629,15 @@ def install():
     
     # 创建 sing-box 配置
     create_sing_box_config(port_vm_ws, uuid_str)
-    
-    # 创建启动脚本 (传入 uuid_str 用于生成 Nginx 配置)
-    create_startup_script(port_vm_ws, uuid_str)
+    # 调整顺序：先获取域名，再创建启动脚本，以确保共享配置已写入
+    # 尝试获取域名
+    domain = get_tunnel_domain()
+    if not domain:
+        print("无法获取tunnel域名，请检查log文件 {}".format(LOG_FILE))
+        sys.exit(1)
+
+    # 创建启动脚本 (需要传入domain以写入共享配置)
+    create_startup_script(port_vm_ws, uuid_str, domain)
     
     # 设置开机自启动
     setup_autostart()
@@ -639,14 +645,8 @@ def install():
     # 启动服务
     start_services()
     
-    # 尝试获取域名和生成链接
-    domain = get_tunnel_domain()
-    if domain:
-        generate_links(domain, port_vm_ws, uuid_str)
-        
-    else:
-        print("无法获取tunnel域名，请检查log文件 {}".format(LOG_FILE))
-        sys.exit(1)
+    # 生成链接
+    generate_links(domain, port_vm_ws, uuid_str)
 
 # 设置开机自启动
 def setup_autostart():
