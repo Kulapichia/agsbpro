@@ -29,6 +29,22 @@ LIST_FILE = INSTALL_DIR / "list.txt"
 LOG_FILE = INSTALL_DIR / "argo.log"
 DEBUG_LOG = INSTALL_DIR / "python_debug.log"
 CUSTOM_DOMAIN_FILE = INSTALL_DIR / "custom_domain.txt" # 存储最终使用的域名
+NGINX_SNIPPET_FILE = INSTALL_DIR / "nginx_agsb_snippet.conf" # 用于存放生成的Nginx配置片段
+
+def check_nginx_installed():
+    """检查系统中是否安装了Nginx"""
+    # 使用 shutil.which 检查 nginx 命令是否存在于 PATH 中
+    if shutil.which('nginx'):
+        try:
+            # 进一步通过版本号确认
+            result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
+            if "nginx version" in result.stdout:
+                print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
+                return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+    print("ℹ️ 未检测到 Nginx。")
+    return False
 
 # 添加命令行参数解析
 def parse_args():
@@ -296,7 +312,19 @@ def generate_links(domain, port_vm_ws, uuid_str):
     
     print("\033[34m--------------------------------------------------------\033[0m") # 结束分隔线
     print() # 末尾再加一个空行
-    
+    # ---- 新增：Nginx协同模式提示 ----
+    if os.path.exists(NGINX_SNIPPET_FILE):
+        print("\n" + "="*70)
+        print("🤝 \033[33m检测到Nginx，已进入协同模式！\033[0m".center(80))
+        print("="*70)
+        print("为了让Argo隧道通过Nginx工作，您需要进行一步手动操作：")
+        print("1. 打开您的主Nginx配置文件 (通常是 `/etc/nginx/nginx.conf`)。")
+        print("2. 在 `http { ... }` 配置块的**末尾**（在最后一个 `}` 之前），添加以下这行代码：")
+        print(f"\n   \033[32minclude {os.path.abspath(NGINX_SNIPPET_FILE)};\033[0m\n")
+        print("3. 保存文件后，执行以下命令重载Nginx：")
+        print("   \033[36msudo nginx -t && sudo systemctl reload nginx\033[0m")
+        print("\n完成后，所有到您域名的流量都会先经过Nginx处理。")
+        print("="*70 + "\n")    
     write_debug_log(f"链接生成完毕，已保存并按两种格式打印到终端。")
     return True
 
@@ -568,6 +596,10 @@ def uninstall():
     # 删除安装目录
     if INSTALL_DIR.exists():
         try:
+            # 在删除主目录前，先清理Nginx配置片段
+            if NGINX_SNIPPET_FILE.exists():
+                NGINX_SNIPPET_FILE.unlink()
+                print(f"Nginx配置片段 {NGINX_SNIPPET_FILE} 已删除。")
             shutil.rmtree(INSTALL_DIR)
             print(f"安装目录 {INSTALL_DIR} 已删除。")
         except Exception as e:
@@ -705,17 +737,56 @@ echo $! > {SB_PID_FILE.name}
 '''
     sb_start_script_path.write_text(sb_start_content)
     os.chmod(sb_start_script_path, 0o755)
-
+    # ---- 智能协同Nginx的核心修改 ----
+    nginx_installed = check_nginx_installed()
+    # 和 sing-box 配置中的路径保持一致
+    ws_path = f"/{uuid_str[:8]}-vm" 
     # cloudflared启动脚本
     cf_start_script_path = INSTALL_DIR / "start_cf.sh"
     cf_cmd_base = f"./cloudflared tunnel --no-autoupdate"
-    # 使用与 sing-box 配置中一致的路径，确保 ?ed=2048 在这里也加上
-    ws_path_for_url = f"/{uuid_str[:8]}-vm?ed=2048" 
+    if argo_token:
+        # 命名隧道模式，通常需要配合 Nginx 使用
+        print("🤝 检测到Argo Token，将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
+        cloudflared_url = "http://localhost:80"
+        nginx_needed = True
+    elif nginx_installed:
+        # 临时隧道，但检测到 Nginx
+        print("🤝 检测到Nginx，将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
+        cloudflared_url = "http://localhost:80"
+        nginx_needed = True
+    else:
+        # 临时隧道，且没有 Nginx
+        print("🚀 将以【独立模式】运行。Cloudflared将直连sing-box。")
+        ws_path_for_url = f"{ws_path}?ed=2048"
+        cloudflared_url = f"http://localhost:{port_vm_ws}{ws_path_for_url}"
+        nginx_needed = False
 
+    # 只有在需要与 Nginx 协同工作时才生成配置片段
+    if nginx_needed:
+        nginx_snippet = f"""
+# ArgoSB Nginx 配置片段 (由 agsb-v2.py 生成)
+# 请将此片段 'include' 到您的 nginx.conf 的 http 块中
+# 例如: include {os.path.abspath(NGINX_SNIPPET_FILE)};
+
+# 将特定路径的WebSocket流量转发给sing-box
+location = {ws_path} {{
+    proxy_pass http://127.0.0.1:{port_vm_ws};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}}
+"""
+        with open(NGINX_SNIPPET_FILE, "w") as f:
+            f.write(nginx_snippet)
+        print(f"✅ 已生成Nginx配置片段: {NGINX_SNIPPET_FILE}")
+    # 根据模式构建最终的cloudflared命令
     if argo_token: # 使用命名隧道
         cf_cmd = f"{cf_cmd_base} run --token {argo_token}"
-    else: # 使用临时隧道
-        cf_cmd = f"{cf_cmd_base} --url http://localhost:{port_vm_ws}{ws_path_for_url} --edge-ip-version auto --protocol http2"
+    else: # 临时隧道
+        cf_cmd = f"{cf_cmd_base} --url {cloudflared_url} --edge-ip-version auto --protocol http2"
     
     cf_start_content = f'''#!/bin/bash
 cd {INSTALL_DIR.resolve()}
@@ -725,7 +796,7 @@ echo $! > {ARGO_PID_FILE.name}
     cf_start_script_path.write_text(cf_start_content)
     os.chmod(cf_start_script_path, 0o755)
     
-    write_debug_log("启动脚本已创建/更新。")
+    write_debug_log(f"启动脚本已创建/更新 (Nginx协同模式: {nginx_needed})")
 
 # 启动服务
 def start_services():
