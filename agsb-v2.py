@@ -224,9 +224,37 @@ http {{
     }}
 }}
 """
-    # ... 后续写入和重载逻辑 ...
-    # (此部分与上一轮回答中的实现相同，不再重复)
-    return True
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+            tmp.write(nginx_config_template)
+            tmp_path = tmp.name
+
+        main_conf_path = '/etc/nginx/nginx.conf'
+        if os.path.exists(main_conf_path):
+            backup_path = main_conf_path + '.bak'
+            print(f"   -> 正在备份当前 Nginx 配置到 {backup_path}")
+            subprocess.run(['sudo', 'mv', main_conf_path, backup_path], check=True)
+        
+        print(f"   -> 正在写入新的 Nginx 配置文件到 {main_conf_path}")
+        subprocess.run(['sudo', 'mv', tmp_path, main_conf_path], check=True)
+
+        print("   -> 正在测试新的 Nginx 配置...")
+        test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+        if test_result.returncode != 0:
+            print("❌ 新生成的 Nginx 配置测试失败，正在恢复备份...")
+            print(test_result.stderr)
+            if os.path.exists(backup_path):
+                subprocess.run(['sudo', 'mv', backup_path, main_conf_path], check=True)
+            return False
+
+        print("   -> 正在重载 Nginx 服务...")
+        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+        print("✅ Nginx 已成功应用新配置。")
+        return True
+
+    except Exception as e:
+        print(f"❌ 创建或应用 Nginx 配置时发生严重错误: {e}")
+        return False
 
 # 添加命令行参数解析
 def parse_args():
