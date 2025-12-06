@@ -734,8 +734,29 @@ def install():
     write_debug_log(f"生成配置文件: {CONFIG_FILE}")
     write_debug_log(f"UUID: {uuid_str}, 端口: {port_vm_ws}")
     
-    # 创建 sing-box 配置
-    create_sing_box_config(port_vm_ws, uuid_str)
+    # 尝试获取域名和生成链接
+    domain = get_tunnel_domain()
+    if domain:
+        # 新增：写入共享配置
+        ws_path = f"/{uuid_str}-vm"
+        argosb_service_data = {
+            "domain": domain, "ws_path": ws_path, "internal_port": port_vm_ws, "type": "argosb"
+        }
+        update_shared_config("argosb", argosb_service_data)
+
+        # 创建 sing-box 配置
+        create_sing_box_config(port_vm_ws, uuid_str)
+        # 创建启动脚本 (传入 domain 以便写入共享配置)
+        create_startup_script(port_vm_ws, uuid_str) # 注意：此版本create_startup_script需要传参
+        # 设置开机自启动
+        setup_autostart()
+        # 启动服务
+        start_services()
+        # 生成链接
+        generate_links(domain, port_vm_ws, uuid_str)
+    else:
+        print("无法获取tunnel域名，请检查log文件 {}".format(LOG_FILE))
+        sys.exit(1)
     
     # 创建启动脚本
     create_startup_script(port_vm_ws, uuid_str)
