@@ -23,6 +23,216 @@ def get_user_home():
     这解决了不同用户执行脚本导致路径不一致的问题。
     """
     return "/root"
+# ==============================================================================
+# ============================ 新增：核心自动化函数 ============================
+# ==============================================================================
+
+# 定义共享配置文件路径，放在.agsb目录外，便于多脚本访问
+SHARED_CONFIG_FILE = Path.home() / ".all_services.json"
+
+def check_nginx_installed():
+    """
+    检查系统中是否安装了Nginx，并尝试定位主配置文件。
+    返回一个元组 (is_installed, config_path)。
+    """
+    if not shutil.which('nginx'):
+        print("ℹ️ 未在 PATH 中检测到 Nginx。")
+        return False, None
+
+    try:
+        result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
+        if "nginx version" not in result.stdout:
+            print("ℹ️ nginx 命令存在，但版本信息无法识别。")
+            return False, None
+        print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("ℹ️ 未能成功执行 nginx -v。")
+        return False, None
+
+    possible_config_paths = [
+        '/etc/nginx/nginx.conf',
+        '/usr/local/nginx/conf/nginx.conf',
+        '/usr/local/etc/nginx/nginx.conf',
+        '/opt/homebrew/etc/nginx/nginx.conf',
+        '/etc/nginx/conf/nginx.conf'
+    ]
+    
+    found_config_path = next((path for path in possible_config_paths if os.path.exists(path)), None)
+    
+    if found_config_path:
+        print(f"🔍 发现已存在的 Nginx 主配置文件: {found_config_path}")
+    else:
+        print("🤔 Nginx 已安装，但未在标准路径找到主配置文件。")
+
+    return True, found_config_path
+
+def update_shared_config(service_name, data):
+    """
+    更新或添加一个服务的配置到共享文件中。
+    :param service_name: 服务的唯一标识符, e.g., 'argosb'
+    :param data: 包含该服务信息的字典, e.g., {'domain': 'a.com', 'ws_path': '/path', 'port': 12345}
+    """
+    try:
+        shared_config = {}
+        if SHARED_CONFIG_FILE.exists():
+            with open(SHARED_CONFIG_FILE, 'r') as f:
+                try:
+                    shared_config = json.load(f)
+                except json.JSONDecodeError:
+                    write_debug_log(f"Warning: Shared config file {SHARED_CONFIG_FILE} is corrupted or empty.")
+                    pass
+        
+        shared_config[service_name] = data
+
+        with open(SHARED_CONFIG_FILE, 'w') as f:
+            json.dump(shared_config, f, indent=2)
+
+        write_debug_log(f"Updated shared config for {service_name} with data: {data}")
+        return True
+    except Exception as e:
+        write_debug_log(f"Failed to update shared config: {e}")
+        return False
+
+def install_nginx():
+    """使用系统包管理器安装Nginx"""
+    print("🔧 未检测到 Nginx，正在尝试自动安装...")
+    package_manager = 'apt-get' if shutil.which('apt-get') else 'yum' if shutil.which('yum') else 'dnf' if shutil.which('dnf') else None
+
+    if package_manager:
+        try:
+            print("   - 正在更新包索引 (需要sudo权限)...")
+            if package_manager == 'apt-get':
+                subprocess.run(['sudo', package_manager, 'update', '-y'], check=True, capture_output=True, text=True)
+            
+            print(f"   - 正在使用 '{package_manager}' 安装Nginx...")
+            subprocess.run(['sudo', package_manager, 'install', '-y', 'nginx'], check=True, capture_output=True, text=True)
+            print("✅ Nginx 安装成功。")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            error_output = e.stderr if hasattr(e, 'stderr') else str(e)
+            print(f"❌ Nginx 自动安装失败: {error_output}")
+            print("   请手动安装 Nginx 后重新运行脚本: 'sudo apt install nginx' 或 'sudo yum install nginx'")
+            return False
+    else:
+        print("❌ 未能识别系统包管理器 (apt/yum/dnf)，无法自动安装 Nginx。")
+        return False
+
+def create_full_nginx_config():
+    """动态读取所有服务配置，生成一个功能完备的nginx.conf"""
+    print("📝 正在动态生成 Nginx 主配置文件...")
+    
+    shared_config = json.load(open(SHARED_CONFIG_FILE)) if SHARED_CONFIG_FILE.exists() else {}
+
+    cert_map, key_map, server_names, locations = [], [], [], []
+
+    # --- 动态构建 ---
+    for service, data in shared_config.items():
+        domain = data.get('domain')
+        if not domain: continue
+        server_names.append(domain)
+
+        # Map块
+        if data.get('cert_path'):
+            cert_map.append(f"        {domain}       {data['cert_path']};")
+            key_map.append(f"        {domain}       {data['key_path']};")
+
+        # Location块
+        if service == 'hysteria2':
+             locations.append(f'if ($host = "{domain}" or $host = $server_addr) {{ root {data["web_root"]}; index index.html; try_files $uri $uri/ =404; }}')
+        elif service == 'vpn_fileserver':
+             locations.append(f"""if ($host = "{domain}") {{
+                if ($request_uri ~* \\.(yaml|txt|json)$) {{ add_header Content-Disposition 'attachment'; }}
+                proxy_pass http://127.0.0.1:{data['internal_port']};
+                proxy_set_header Host $http_host;
+            }}""")
+        elif service == 'argosb':
+             locations.append(f"""if ($host = "{domain}") {{
+                root /var/www/html/argosb; # 伪装路径
+                index index.html;
+                try_files $uri $uri/ =404;
+            }}""")
+
+    # 默认证书
+    default_cert, default_key = "/etc/nginx/ssl/default.crt", "/etc/nginx/ssl/default.key" # 备用路径
+    if 'hysteria2' in shared_config and shared_config['hysteria2'].get('cert_path'):
+        default_cert = shared_config['hysteria2']['cert_path']
+        default_key = shared_config['hysteria2']['key_path']
+    cert_map.append(f"        default             {default_cert};")
+    key_map.append(f"        default             {default_key};")
+
+    locations.append("return 404;") # 兜底
+
+    # --- 组装模板 ---
+    nginx_template = f"""
+user nginx;
+pid /run/nginx.pid;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+events {{ worker_connections 1024; }}
+http {{
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile on; tcp_nopush on; keepalive_timeout 65;
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+    map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}
+    map $host $ssl_certificate_file {{
+{chr(10).join(cert_map)}
+    }}
+    map $host $ssl_certificate_key_file {{
+{chr(10).join(key_map)}
+    }}
+    include {os.path.abspath(NGINX_SNIPPET_FILE)};
+    server {{
+        listen 443 ssl http2; listen [::]:443 ssl http2;
+        server_name {' '.join(set(server_names))} _;
+        ssl_certificate         $ssl_certificate_file;
+        ssl_certificate_key     $ssl_certificate_key_file;
+        ssl_protocols           TLSv1.2 TLSv1.3;
+        location / {{
+{''.join(locations)}
+        }}
+    }}
+    server {{
+        listen 80 default_server; listen [::]:80 default_server;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }}
+}}
+"""
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+            tmp.write(nginx_config_template)
+            tmp_path = tmp.name
+
+        main_conf_path = '/etc/nginx/nginx.conf'
+        if os.path.exists(main_conf_path):
+            backup_path = main_conf_path + '.bak'
+            print(f"   -> 正在备份当前 Nginx 配置到 {backup_path}")
+            subprocess.run(['sudo', 'mv', main_conf_path, backup_path], check=True)
+        
+        print(f"   -> 正在写入新的 Nginx 配置文件到 {main_conf_path}")
+        subprocess.run(['sudo', 'mv', tmp_path, main_conf_path], check=True)
+
+        print("   -> 正在测试新的 Nginx 配置...")
+        test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+        if test_result.returncode != 0:
+            print("❌ 新生成的 Nginx 配置测试失败，正在恢复备份...")
+            print(test_result.stderr)
+            if os.path.exists(backup_path):
+                subprocess.run(['sudo', 'mv', backup_path, main_conf_path], check=True)
+            return False
+
+        print("   -> 正在重载 Nginx 服务...")
+        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+        print("✅ Nginx 已成功应用新配置。")
+        return True
+
+    except Exception as e:
+        print(f"❌ 创建或应用 Nginx 配置时发生严重错误: {e}")
+        return False
 
 def get_system_info():
     """获取系统信息"""
@@ -2633,7 +2843,22 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
     # 5. 创建Web伪装文件
     web_dir = create_web_masquerade(base_dir)
     print(f"✅ 创建Web伪装：{web_dir}")
-    
+    # 5.5 注册Hysteria2和文件下载服务信息到共享配置
+    hysteria2_service_data = {
+        "domain": server_address,
+        "cert_path": os.path.abspath(cert_path),
+        "key_path": os.path.abspath(key_path),
+        "web_root": os.path.abspath(web_dir),
+        "type": "hysteria2"
+    }
+    update_shared_config("hysteria2", hysteria2_service_data)
+
+    vpn_service_data = {
+        "domain": f"vpn.{server_address}", # 假设的域名规则
+        "internal_port": 8085, # 文件服务器的固定端口
+        "type": "vpn_fileserver"
+    }
+    update_shared_config("vpn_fileserver", vpn_service_data)    
     # 6. 创建Hysteria2配置（端口跳跃+混淆+HTTP/3伪装）
     hysteria_config = {
         "listen": f":{port}",
@@ -3021,7 +3246,7 @@ http:
         "nginx_success": nginx_success
     }
 
-def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key_path, port):
+def setup_nginx_web_masquerade(base_dir, domain, web_dir, cert_path, key_path, port):
     """
     配置nginx Web伪装的简化版本 - 增强了协同模式的逻辑和提示
     """
@@ -3195,7 +3420,40 @@ def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key
     except Exception as e:
         print(f"❌ nginx配置失败: {e}")
         return False
+    """配置nginx Web伪装 - 使用全新的统一化动态配置逻辑"""
+    # ---- 全新的统一化 Nginx 处理逻辑 ----
+    nginx_is_installed, nginx_config_path = check_nginx_installed()
+    
+    if not nginx_is_installed:
+        if not install_nginx():
+            sys.exit("❌ 必须安装Nginx才能继续，安装失败。")
+        nginx_is_installed, nginx_config_path = check_nginx_installed()
+        if not nginx_is_installed:
+            sys.exit("❌ Nginx 安装后仍无法检测，安装终止。")
 
+    if not nginx_config_path:
+        print("⚠️ 未找到 Nginx 主配置文件，将创建全新的配置文件。")
+        if not create_full_nginx_config():
+            sys.exit("❌ 创建完整的 Nginx 配置文件失败，安装终止。")
+    else:
+        print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
+        print("   脚本不会修改您的主配置，请确保已正确配置以包含所有服务。")
+
+    try:
+        print("   -> 正在测试 Nginx 配置...")
+        test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+        if test_result.returncode != 0:
+            print("❌ Nginx 配置测试失败。")
+            print(test_result.stderr)
+            return False
+
+        print("   -> 正在重载 Nginx 服务...")
+        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+        print("✅ Nginx 已成功应用新配置。")
+        return True
+    except Exception as e:
+        print(f"❌ 重载 Nginx 时发生错误: {e}")
+        return False
 def enable_bbr_optimization():
     """启用BBR拥塞控制算法优化网络性能"""
     try:
