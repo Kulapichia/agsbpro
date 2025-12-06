@@ -27,6 +27,22 @@ ARGO_PID_FILE = INSTALL_DIR / "sbargopid.log"
 LIST_FILE = INSTALL_DIR / "list.txt"
 LOG_FILE = INSTALL_DIR / "argo.log"
 DEBUG_LOG = INSTALL_DIR / "python_debug.log"
+NGINX_SNIPPET_FILE = INSTALL_DIR / "nginx_agsb_snippet.conf" # 用于存放生成的Nginx配置片段
+
+def check_nginx_installed():
+    """检查系统中是否安装了Nginx"""
+    # 使用 shutil.which 检查 nginx 命令是否存在于 PATH 中
+    if shutil.which('nginx'):
+        try:
+            # 进一步通过版本号确认
+            result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
+            if "nginx version" in result.stdout:
+                print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
+                return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+    print("ℹ️ 未检测到 Nginx。")
+    return False
 
 # 网络请求函数
 def http_get(url, timeout=10):
@@ -408,7 +424,20 @@ def generate_links(domain, port_vm_ws, uuid_str):
         f.write("- 该脚本由空空开发，更多信息请访问 [GitHub项目](https://github.com/Kulapichia/)\n")
         f.write("- YouTube频道: [空空的V2Ray与Clash](https://www.youtube.com/@ChupachiehChuanshuo)\n")
         f.write("- Telegram频道: [https://t.me/MallSpot](https://t.me/MallSpot)\n")
-    
+    # 在打印最终结果之前，检查并添加Nginx协同提示
+    if os.path.exists(NGINX_SNIPPET_FILE):
+        print("\n" + "="*70)
+        print("🤝 \033[33m检测到Nginx，已进入协同模式！\033[0m".center(80))
+        print("="*70)
+        print("为了让Argo隧道通过Nginx工作，您需要进行一步手动操作：")
+        print("1. 打开您的主Nginx配置文件 (通常是 `/etc/nginx/nginx.conf`)。")
+        print("2. 在 `http { ... }` 配置块的**末尾**（在最后一个 `}` 之前），添加以下这行代码：")
+        print(f"\n   \033[32minclude {os.path.abspath(NGINX_SNIPPET_FILE)};\033[0m\n")
+        print("3. 保存文件后，执行以下命令重载Nginx：")
+        print("   \033[36msudo nginx -t && sudo systemctl reload nginx\033[0m")
+        print("完成后，所有到您域名的流量都会先经过Nginx处理。")
+        print("="*70 + "\n")
+   
     # 打印节点信息
     print("\033[36m╭───────────────────────────────────────────────────────────────╮\033[0m")
     print("\033[36m│                \033[33m✨ ArgoSB 安装成功! ✨                    \033[36m│\033[0m")
@@ -574,8 +603,8 @@ def install():
     # 创建 sing-box 配置
     create_sing_box_config(port_vm_ws, uuid_str)
     
-    # 创建启动脚本
-    create_startup_script(port_vm_ws)
+    # 创建启动脚本 (传入 uuid_str 用于生成 Nginx 配置)
+    create_startup_script(port_vm_ws, uuid_str)
     
     # 设置开机自启动
     setup_autostart()
@@ -624,6 +653,17 @@ def setup_autostart():
 
 # 卸载脚本
 def uninstall():
+    # 删除安装目录
+    if os.path.exists(str(INSTALL_DIR)):
+        try:
+            # (修改点：在删除主目录前，先删除可能存在的 Nginx 片段)
+            if os.path.exists(str(NGINX_SNIPPET_FILE)):
+                print(f"正在清理Nginx配置片段: {NGINX_SNIPPET_FILE}")
+                os.remove(str(NGINX_SNIPPET_FILE))
+            
+            shutil.rmtree(str(INSTALL_DIR), ignore_errors=True)
+        except:
+            print("无法完全删除安装目录，请手动删除：{}".format(INSTALL_DIR))
     print("开始卸载服务")
     
     # 停止服务，使用更温和的方式先
@@ -864,7 +904,7 @@ def create_sing_box_config(port_vm_ws, uuid_str):
     return True
 
 # 创建启动脚本
-def create_startup_script(port_vm_ws):
+def create_startup_script(port_vm_ws, uuid_str):
     # 创建sing-box启动脚本
     sb_start_script = INSTALL_DIR / "start_sb.sh"
     with open(str(sb_start_script), 'w') as f:
@@ -873,17 +913,50 @@ cd {INSTALL_DIR}
 ./sing-box run -c sb.json > sb.log 2>&1 & echo $! > sbpid.log
 ''')
     os.chmod(str(sb_start_script), 0o755)
-    
+    # ---- 智能协同Nginx的核心修改 ----
+    nginx_installed = check_nginx_installed()
+    ws_path = f"/{uuid_str}-vm"    
     # 创建cloudflared启动脚本
     cf_start_script = INSTALL_DIR / "start_cf.sh"
+    if nginx_installed:
+        print("🤝 将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
+        # 模式一：有Nginx，让cloudflared将所有流量指向Nginx的80端口
+        # Nginx将负责根据路径将流量转发给sing-box
+        cloudflared_url = "http://localhost:80"
+        
+        # 生成Nginx配置片段
+        nginx_snippet = f"""
+# ArgoSB Nginx 配置片段
+# 请将此片段 'include' 到您的 nginx.conf 的 http 块中
+# 例如: include {os.path.abspath(NGINX_SNIPPET_FILE)};
+
+location = {ws_path} {{
+    proxy_pass http://127.0.0.1:{port_vm_ws};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+}}
+"""
+        with open(NGINX_SNIPPET_FILE, "w") as f:
+            f.write(nginx_snippet)
+        print(f"✅ 已生成Nginx配置片段: {NGINX_SNIPPET_FILE}")
+        
+    else:
+        # 模式二：没有Nginx，cloudflared直接指向sing-box
+        print("🚀 将以【独立模式】运行。Cloudflared将直连sing-box。")
+        cloudflared_url = f"http://localhost:{port_vm_ws}"
     with open(str(cf_start_script), 'w') as f:
+        # 使用更灵活的--url参数，不再拼接路径，因为路径管理交给Nginx或sing-box本身
         f.write(f'''#!/bin/bash
 cd {INSTALL_DIR}
-./cloudflared tunnel --url http://localhost:{port_vm_ws}/$(cat config.json | grep -o '"uuid_str":"[^"]*"' | cut -d'"' -f4)-vm?ed=2048 --edge-ip-version auto --no-autoupdate --protocol http2 > argo.log 2>&1 & echo $! > sbargopid.log
+./cloudflared tunnel --url {cloudflared_url} --edge-ip-version auto --no-autoupdate --protocol http2 > argo.log 2>&1 & echo $! > sbargopid.log
 ''')
     os.chmod(str(cf_start_script), 0o755)
     
-    write_debug_log("启动脚本已创建")
+    write_debug_log(f"启动脚本已创建 (Nginx协同模式: {nginx_installed})")
 
 # 启动服务
 def start_services():
