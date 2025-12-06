@@ -264,11 +264,11 @@ def generate_links(domain, port_vm_ws, uuid_str):
     link_names.append("WS-80-104.21.0.0")
     link_configs.append(config6)
     
-    # 8080端口 - 104.22.0.0
+    # 8085端口 - 104.22.0.0
     config7 = {
-        "ps": f"vmess-ws-argo-{hostname}-8080",
+        "ps": f"vmess-ws-argo-{hostname}-8085",
         "add": "104.22.0.0",
-        "port": "8080",
+        "port": "8085",
         "id": uuid_str,
         "aid": "0",
         "net": "ws",
@@ -279,7 +279,7 @@ def generate_links(domain, port_vm_ws, uuid_str):
     }
     vma_link8 = generate_vmess_link(config7)
     all_links.append(vma_link8)
-    link_names.append("WS-8080-104.22.0.0")
+    link_names.append("WS-8085-104.22.0.0")
     link_configs.append(config7)
     
     # 8880端口 - 104.24.0.0
