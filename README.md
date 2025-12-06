@@ -122,7 +122,7 @@ python3 nginx-hysteria2.py install --simple \
 # 停止 Hysteria2 主代理服务
 bash ~/.hysteria2/stop.sh
 
-# 停止临时的 Python 文件下载服务 (8080端口)
+# 停止临时的 Python 文件下载服务 (8085端口)
 # 使用 pkill 精确查找并终止进程，如果找不到也无需担心
 sudo pkill -f "config_server.py"
 ```
@@ -223,14 +223,14 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     ```
     > **期望结果**：您应该能在输出列表中找到以下三项：
     > - `hysteria` 程序正在监听 `UDP 443` 端口 (或其他您指定的端口)。
-    > - `python3` 程序正在监听 `TCP 8080` 端口。
+    > - `python3` 程序正在监听 `TCP 8085` 端口。
     > - `nginx` 程序正在监听 `TCP 443` 和 `TCP 80` 端口。
 
 3.  **功能性测试**
 
     ```bash
     # 在服务器上测试文件下载服务
-    curl http://127.0.0.1:8080/clash.yaml
+    curl http://127.0.0.1:8085/clash.yaml
     ```
     > **期望结果**：屏幕上会打印出 `clash.yaml` 的内容。同时，在您的电脑或手机上，使用客户端应该能通过 Hysteria2 成功连接并上网。
 
@@ -259,7 +259,7 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     # 如果是主服务出问题 (通常占用 UDP 443)
     sudo journalctl -u hysteria-server.service -n 50 --no-pager
   
-    # 如果是文件下载服务出问题 (通常占用 TCP 8080)
+    # 如果是文件下载服务出问题 (通常占用 TCP 8085)
     sudo journalctl -u hysteria-fileserver.service -n 50 --no-pager
     ```
 
@@ -267,12 +267,12 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
 
     你可以使用 `ss` 命令精确查找PID，或者使用 `pkill` 进行模式匹配来终止。
 
-    **方法 A: 精确查找 (以8080端口为例)**
+    **方法 A: 精确查找 (以8085端口为例)**
     ```bash
-    # 查找占用 8080 端口的进程
-    sudo ss -tulpn | grep ':8080'
+    # 查找占用 8085 端口的进程
+    sudo ss -tulpn | grep ':8085'
     ```
-    该命令会显示出监听 8080 端口的进程名及其 PID (例如 `pid=12345`)。然后手动终止它：
+    该命令会显示出监听 8085 端口的进程名及其 PID (例如 `pid=12345`)。然后手动终止它：
     ```bash
     # 假设上一步找到的 PID 是 12345
     sudo kill -9 12345
@@ -419,10 +419,10 @@ sudo rm -rf /root/.hysteria2
 ps aux | grep -i "hysteria"
 ps aux | grep "config_server.py"
 
-# 检查 8080 端口是否还被监听，此命令不应返回任何结果
-sudo ss -tulnp | grep 8080
+# 检查 8085 端口是否还被监听，此命令不应返回任何结果
+sudo ss -tulnp | grep 8085
 # 或者使用 lsof
-# sudo lsof -i :8080
+# sudo lsof -i :8085
 ```
 
 如果以上命令都没有任何输出，说明你的环境已经清理干净了。
@@ -552,7 +552,7 @@ sudo ufw allow 80/tcp           # HTTP重定向
 
 ```bash
 # 配置文件下载服务（可选）
-sudo ufw allow 8080/tcp
+sudo ufw allow 8085/tcp
 ```
 
 #### ☁️ 云服务器安全组
@@ -562,7 +562,7 @@ sudo ufw allow 8080/tcp
 - **UDP端口范围**: 1024-1074 (或自定义范围)
 - **TCP 443**: HTTPS/nginx
 - **TCP 80**: HTTP重定向
-- **TCP 8080**: 配置下载服务（可选）
+- **TCP 8085**: 配置下载服务（可选）
 
 ### 📊 功能详解
 
@@ -647,10 +647,10 @@ sudo ufw allow 8080/tcp
 
 | 配置类型 | 下载地址 | 说明 |
 |----------|----------|------|
-| **v2rayN多端口订阅** | `http://你的服务器IP:8080/v2rayn-subscription.txt` | Base64编码订阅文件，包含100个节点 |
-| **多端口配置明文** | `http://你的服务器IP:8080/multi-port-links.txt` | 明文链接，便于查看和手动导入 |
-| **Clash多端口配置** | `http://你的服务器IP:8080/clash.yaml` | Clash Meta配置，包含多个端口节点 |
-| **官方客户端配置** | `http://你的服务器IP:8080/hysteria2.json` | Hysteria2官方客户端JSON配置 |
+| **v2rayN多端口订阅** | `http://你的服务器IP:8085/v2rayn-subscription.txt` | Base64编码订阅文件，包含100个节点 |
+| **多端口配置明文** | `http://你的服务器IP:8085/multi-port-links.txt` | 明文链接，便于查看和手动导入 |
+| **Clash多端口配置** | `http://你的服务器IP:8085/clash.yaml` | Clash Meta配置，包含多个端口节点 |
+| **官方客户端配置** | `http://你的服务器IP:8085/hysteria2.json` | Hysteria2官方客户端JSON配置 |
 
 ### 💻 客户端支持
 
