@@ -1056,7 +1056,7 @@ def create_config(base_dir, port, password, cert_path, key_path, domain, enable_
                 "dir": custom_web_dir
             }
         }
-    elif port in [80, 443, 8080, 8443]:
+    elif port in [80, 443, 8085, 8443]:
         config["masquerade"] = {
             "type": "proxy",
             "proxy": {
@@ -2737,11 +2737,11 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
     if port_range:
         # 准备下载链接
         download_links = {
-            "v2rayN多端口订阅 (推荐)": f"http://{server_address}:8080/v2rayn-subscription.txt",
-            "多端口配置明文查看": f"http://{server_address}:8080/multi-port-links.txt",
-            "Clash多端口配置": f"http://{server_address}:8080/clash.yaml", 
-            "官方客户端配置": f"http://{server_address}:8080/hysteria-official.yaml",
-            "JSON配置 (完整功能)": f"http://{server_address}:8080/hysteria2.json"
+            "v2rayN多端口订阅 (推荐)": f"http://{server_address}:8085/v2rayn-subscription.txt",
+            "多端口配置明文查看": f"http://{server_address}:8085/multi-port-links.txt",
+            "Clash多端口配置": f"http://{server_address}:8085/clash.yaml", 
+            "官方客户端配置": f"http://{server_address}:8085/hysteria-official.yaml",
+            "JSON配置 (完整功能)": f"http://{server_address}:8085/hysteria2.json"
         }
         
         # 生成多端口配置（v2rayN和Clash使用相同的端口列表）
@@ -2810,7 +2810,7 @@ socks5:
   listen: 127.0.0.1:1080
 
 http:
-  listen: 127.0.0.1:8080
+  listen: 127.0.0.1:8085
 """
         
         # 生成Hysteria2官方客户端YAML配置（正确的端口跳跃格式）
@@ -2843,7 +2843,7 @@ socks5:
   listen: 127.0.0.1:1080
 
 http:
-  listen: 127.0.0.1:8080
+  listen: 127.0.0.1:8085
 
 # 端口跳跃说明：
 # Hysteria2端口跳跃有两种实现方式：
@@ -2943,7 +2943,7 @@ socks5:
   listen: 127.0.0.1:1080
 
 http:
-  listen: 127.0.0.1:8080
+  listen: 127.0.0.1:8085
 
 # 此配置需要服务器端开放{port_start}-{port_end}端口范围
 # 每个端口都需要独立的Hysteria2服务实例或负载均衡配置
@@ -3333,7 +3333,7 @@ class ConfigHandler(http.server.SimpleHTTPRequestHandler):
         pass
 
 if __name__ == "__main__":
-    PORT = 8080
+    PORT = 8085
     TARGET_DIR = "{config_dir}" # 保留绝对路径以便直接运行
 
     try:
@@ -3367,10 +3367,10 @@ if __name__ == "__main__":
         subprocess.run(['chmod', '+x', server_file], check=True)
 
         # 检查防火墙规则是否存在，不存在则添加
-        iptables_check = subprocess.run(['sudo', 'iptables', '-C', 'INPUT', '-p', 'tcp', '--dport', '8080', '-j', 'ACCEPT'], check=False, capture_output=True)
+        iptables_check = subprocess.run(['sudo', 'iptables', '-C', 'INPUT', '-p', 'tcp', '--dport', '8085', '-j', 'ACCEPT'], check=False, capture_output=True)
         if iptables_check.returncode != 0:
-            subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-p', 'tcp', '--dport', '8080', '-j', 'ACCEPT'], check=False)
-            print("🔗 已添加防火墙规则以允许端口 8080")
+            subprocess.run(['sudo', 'iptables', '-A', 'INPUT', '-p', 'tcp', '--dport', '8085', '-j', 'ACCEPT'], check=False)
+            print("🔗 已添加防火墙规则以允许端口 8085")
             
         # 当使用systemd时，不再需要脚本自己启动临时服务器
         # 检查是否在systemd模式下
@@ -3392,7 +3392,7 @@ if __name__ == "__main__":
             # 验证服务
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
                 sock.settimeout(2)
-                if sock.connect_ex(('127.0.0.1', 8080)) == 0:
+                if sock.connect_ex(('127.0.0.1', 8085)) == 0:
                     print("✅ Python HTTP服务器启动成功")
                     return True
                 else:
@@ -3663,10 +3663,10 @@ show_config_info() {{
     
     echo ""
     echo "📥 配置文件下载地址:"
-    echo "• v2rayN多端口订阅: http://$SERVER_ADDRESS:8080/v2rayn-subscription.txt"
-    echo "• 多端口配置明文: http://$SERVER_ADDRESS:8080/multi-port-links.txt"
-    echo "• Clash多端口配置: http://$SERVER_ADDRESS:8080/clash.yaml"
-    echo "• 官方客户端配置: http://$SERVER_ADDRESS:8080/hysteria2.json"
+    echo "• v2rayN多端口订阅: http://$SERVER_ADDRESS:8085/v2rayn-subscription.txt"
+    echo "• 多端口配置明文: http://$SERVER_ADDRESS:8085/multi-port-links.txt"
+    echo "• Clash多端口配置: http://$SERVER_ADDRESS:8085/clash.yaml"
+    echo "• 官方客户端配置: http://$SERVER_ADDRESS:8085/hysteria2.json"
     
     echo ""
     echo "📂 本地配置文件:"
@@ -3740,10 +3740,10 @@ show_service_status() {{
         echo "❌ TCP端口 443: 未监听"
     fi
     
-    if ss -tlnp 2>/dev/null | grep -q ":8080 "; then
-        echo "✅ TCP端口 8080: 监听中 (配置下载)"
+    if ss -tlnp 2>/dev/null | grep -q ":8085 "; then
+        echo "✅ TCP端口 8085: 监听中 (配置下载)"
     else
-        echo "❌ TCP端口 8080: 未监听"
+        echo "❌ TCP端口 8085: 未监听"
     fi
 }}
 
