@@ -3321,11 +3321,13 @@ class ConfigHandler(http.server.SimpleHTTPRequestHandler):
     # 不需要自定义 __init__，它默认从当前工作目录提供文件
     def end_headers(self):
         # 功能：为特定文件添加下载头
-        path_lower = self.path.lower()
-        if path_lower.endswith(('.yaml', '.yml', '.json', '.txt')):
-            # 从原始路径获取文件名，以防url里有大小写区分
-            filename = os.path.basename(self.path)  
-            self.send_header('Content-Disposition', f'attachment; filename="{{filename}}"')
+        # 修复：安全地访问self.path属性，避免AttributeError
+        if hasattr(self, 'path') and self.path:  # ← 修复：先检查属性是否存在
+            path_lower = self.path.lower()
+            if path_lower.endswith(('.yaml', '.yml', '.json', '.txt')):
+                # 从原始路径获取文件名，以防url里有大小写区分
+                filename = os.path.basename(self.path)  
+                self.send_header('Content-Disposition', f'attachment; filename="{{filename}}"')
         super().end_headers()
 
     def log_message(self, format, *args):
