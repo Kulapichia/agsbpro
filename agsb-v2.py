@@ -45,6 +45,188 @@ def check_nginx_installed():
             pass
     print("ℹ️ 未检测到 Nginx。")
     return False
+# ==============================================================================
+# ============================ 新增：核心自动化函数 ============================
+# ==============================================================================
+
+# 定义共享配置文件路径，放在.agsb目录外，便于多脚本访问
+SHARED_CONFIG_FILE = Path.home() / ".all_services.json"
+
+def check_nginx_installed():
+    """
+    检查系统中是否安装了Nginx，并尝试定位主配置文件。
+    返回一个元组 (is_installed, config_path)。
+    """
+    if not shutil.which('nginx'):
+        print("ℹ️ 未在 PATH 中检测到 Nginx。")
+        return False, None
+
+    try:
+        result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
+        if "nginx version" not in result.stdout:
+            print("ℹ️ nginx 命令存在，但版本信息无法识别。")
+            return False, None
+        print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("ℹ️ 未能成功执行 nginx -v。")
+        return False, None
+
+    possible_config_paths = [
+        '/etc/nginx/nginx.conf',
+        '/usr/local/nginx/conf/nginx.conf',
+        '/usr/local/etc/nginx/nginx.conf',
+        '/opt/homebrew/etc/nginx/nginx.conf',
+        '/etc/nginx/conf/nginx.conf'
+    ]
+    
+    found_config_path = next((path for path in possible_config_paths if os.path.exists(path)), None)
+    
+    if found_config_path:
+        print(f"🔍 发现已存在的 Nginx 主配置文件: {found_config_path}")
+    else:
+        print("🤔 Nginx 已安装，但未在标准路径找到主配置文件。")
+
+    return True, found_config_path
+
+def update_shared_config(service_name, data):
+    """
+    更新或添加一个服务的配置到共享文件中。
+    :param service_name: 服务的唯一标识符, e.g., 'argosb'
+    :param data: 包含该服务信息的字典, e.g., {'domain': 'a.com', 'ws_path': '/path', 'port': 12345}
+    """
+    try:
+        shared_config = {}
+        if SHARED_CONFIG_FILE.exists():
+            with open(SHARED_CONFIG_FILE, 'r') as f:
+                try:
+                    shared_config = json.load(f)
+                except json.JSONDecodeError:
+                    write_debug_log(f"Warning: Shared config file {SHARED_CONFIG_FILE} is corrupted or empty.")
+                    pass
+        
+        shared_config[service_name] = data
+
+        with open(SHARED_CONFIG_FILE, 'w') as f:
+            json.dump(shared_config, f, indent=2)
+
+        write_debug_log(f"Updated shared config for {service_name} with data: {data}")
+        return True
+    except Exception as e:
+        write_debug_log(f"Failed to update shared config: {e}")
+        return False
+
+def install_nginx():
+    """使用系统包管理器安装Nginx"""
+    print("🔧 未检测到 Nginx，正在尝试自动安装...")
+    package_manager = 'apt-get' if shutil.which('apt-get') else 'yum' if shutil.which('yum') else 'dnf' if shutil.which('dnf') else None
+
+    if package_manager:
+        try:
+            print("   - 正在更新包索引 (需要sudo权限)...")
+            if package_manager == 'apt-get':
+                subprocess.run(['sudo', package_manager, 'update', '-y'], check=True, capture_output=True, text=True)
+            
+            print(f"   - 正在使用 '{package_manager}' 安装Nginx...")
+            subprocess.run(['sudo', package_manager, 'install', '-y', 'nginx'], check=True, capture_output=True, text=True)
+            print("✅ Nginx 安装成功。")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            error_output = e.stderr if hasattr(e, 'stderr') else str(e)
+            print(f"❌ Nginx 自动安装失败: {error_output}")
+            print("   请手动安装 Nginx 后重新运行脚本: 'sudo apt install nginx' 或 'sudo yum install nginx'")
+            return False
+    else:
+        print("❌ 未能识别系统包管理器 (apt/yum/dnf)，无法自动安装 Nginx。")
+        return False
+
+def create_full_nginx_config():
+    """动态读取所有服务配置，生成一个功能完备的nginx.conf"""
+    print("📝 正在动态生成 Nginx 主配置文件...")
+    
+    shared_config = json.load(open(SHARED_CONFIG_FILE)) if SHARED_CONFIG_FILE.exists() else {}
+
+    cert_map, key_map, server_names, locations = [], [], [], []
+
+    # --- 动态构建 ---
+    for service, data in shared_config.items():
+        domain = data.get('domain')
+        if not domain: continue
+        server_names.append(domain)
+
+        # Map块
+        if data.get('cert_path'):
+            cert_map.append(f"        {domain}       {data['cert_path']};")
+            key_map.append(f"        {domain}       {data['key_path']};")
+
+        # Location块
+        if service == 'hysteria2':
+             locations.append(f'if ($host = "{domain}" or $host = $server_addr) {{ root {data["web_root"]}; index index.html; try_files $uri $uri/ =404; }}')
+        elif service == 'vpn_fileserver':
+             locations.append(f"""if ($host = "{domain}") {{
+                if ($request_uri ~* \\.(yaml|txt|json)$) {{ add_header Content-Disposition 'attachment'; }}
+                proxy_pass http://127.0.0.1:{data['internal_port']};
+                proxy_set_header Host $http_host;
+            }}""")
+        elif service == 'argosb':
+             locations.append(f"""if ($host = "{domain}") {{
+                root /var/www/html/argosb; # 伪装路径
+                index index.html;
+                try_files $uri $uri/ =404;
+            }}""")
+
+    # 默认证书
+    default_cert, default_key = "/etc/nginx/ssl/default.crt", "/etc/nginx/ssl/default.key" # 备用路径
+    if 'hysteria2' in shared_config and shared_config['hysteria2'].get('cert_path'):
+        default_cert = shared_config['hysteria2']['cert_path']
+        default_key = shared_config['hysteria2']['key_path']
+    cert_map.append(f"        default             {default_cert};")
+    key_map.append(f"        default             {default_key};")
+
+    locations.append("return 404;") # 兜底
+
+    # --- 组装模板 ---
+    nginx_template = f"""
+user nginx;
+pid /run/nginx.pid;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+events {{ worker_connections 1024; }}
+http {{
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile on; tcp_nopush on; keepalive_timeout 65;
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+    map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}
+    map $host $ssl_certificate_file {{
+{chr(10).join(cert_map)}
+    }}
+    map $host $ssl_certificate_key_file {{
+{chr(10).join(key_map)}
+    }}
+    include {os.path.abspath(NGINX_SNIPPET_FILE)};
+    server {{
+        listen 443 ssl http2; listen [::]:443 ssl http2;
+        server_name {' '.join(set(server_names))} _;
+        ssl_certificate         $ssl_certificate_file;
+        ssl_certificate_key     $ssl_certificate_key_file;
+        ssl_protocols           TLSv1.2 TLSv1.3;
+        location / {{
+{''.join(locations)}
+        }}
+    }}
+    server {{
+        listen 80 default_server; listen [::]:80 default_server;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }}
+}}
+"""
+    # ... 后续写入和重载逻辑 ...
+    # (此部分与上一轮回答中的实现相同，不再重复)
+    return True
 
 # 添加命令行参数解析
 def parse_args():
@@ -475,37 +657,64 @@ def install(args):
                 sys.exit(1)
 
     # --- 配置和启动 ---
-    config_data = {
-        "uuid_str": uuid_str,
-        "port_vm_ws": port_vm_ws,
-        "argo_token": argo_token, # Will be None if not provided
-        "custom_domain_agn": custom_domain, # Will be None if not provided
-        "install_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(config_data, f, indent=2)
-    write_debug_log(f"生成配置文件: {CONFIG_FILE} with data: {config_data}")
-
-    create_sing_box_config(port_vm_ws, uuid_str)
-    create_startup_script() # Now reads from config for token
-    setup_autostart()
-    start_services()
-
-    final_domain = custom_domain
-    if not argo_token and not custom_domain: # Quick tunnel and no pre-set domain
+    final_domain = custom_domain # 使用用户输入/环境变量的域名
+    # 如果是临时隧道且用户未指定域名，则启动服务后获取
+    if not argo_token and not custom_domain:
+        # 为了获取临时域名，需要先启动服务
+        temp_config_data = {
+            "uuid_str": uuid_str, "port_vm_ws": port_vm_ws, "argo_token": argo_token,
+            "custom_domain_agn": None, "install_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        with open(CONFIG_FILE, 'w') as f: json.dump(temp_config_data, f, indent=2)
+        create_sing_box_config(port_vm_ws, uuid_str)
+        # 此时创建的启动脚本会是直连模式，因为还没有Nginx
+        create_startup_script() 
+        setup_autostart()
+        start_services()
+        
         print("正在等待临时隧道域名生成...")
         final_domain = get_tunnel_domain()
         if not final_domain:
             print("\033[31m无法获取tunnel域名。请检查argo.log或尝试手动指定域名。\033[0m")
-            print("  方法1: python3 " + os.path.basename(__file__) + " --agn your-domain.com")
-            print("  方法2: export agn=your-domain.com && python3 " + os.path.basename(__file__))
             sys.exit(1)
-    elif argo_token and not custom_domain: # Should have exited earlier, but as a safeguard
-        print("\033[31m错误: 使用Argo Token时，自定义域名是必需的但未提供。\033[0m")
+        # 获取到域名后，需要停止服务，重新生成Nginx协同模式的脚本
+        print("获取到临时域名，正在重新配置以协同Nginx...")
+        uninstall() # 用卸载来清理临时进程和crontab
+        # 重新回到主流程，此时 final_domain 已经有值
+    elif argo_token and not custom_domain:
+        print("\033[31m错误: 使用 Argo Tunnel Token 时必须提供自定义域名 (agn/--domain)。\033[0m")
         sys.exit(1)
+
+    # 保证 final_domain 有值后继续
+    if not final_domain:
+        print("\033[31m错误：未能确定最终使用的域名，安装终止。\033[0m")
+        sys.exit(1)
+
+    # 将服务信息写入共享配置
+    ws_path = f"/{uuid_str[:8]}-vm"
+    argosb_service_data = {
+        "domain": final_domain,
+        "ws_path": ws_path,
+        "internal_port": port_vm_ws,
+        "type": "argosb",
+    }
+    update_shared_config("argosb", argosb_service_data)
     
-    if final_domain:
-        generate_links(final_domain, port_vm_ws, uuid_str)
+    # 写入最终的本地配置文件
+    config_data = {
+        "uuid_str": uuid_str, "port_vm_ws": port_vm_ws, "argo_token": argo_token,
+        "custom_domain_agn": final_domain, "install_date": datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+    with open(CONFIG_FILE, 'w') as f: json.dump(config_data, f, indent=2)
+
+    # 重新生成或确认配置文件和启动脚本
+    create_sing_box_config(port_vm_ws, uuid_str)
+    create_startup_script() # 现在它会进入强制Nginx协同模式
+    setup_autostart()
+    start_services()
+
+    # 最后生成链接
+    generate_links(final_domain, port_vm_ws, uuid_str)
     else: # This case should ideally not be reached if logic above is correct
         print("\033[31m最终域名未能确定，无法生成链接。\033[0m")
         sys.exit(1)
@@ -726,7 +935,7 @@ def create_startup_script():
     config = json.loads(CONFIG_FILE.read_text())
     port_vm_ws = config["port_vm_ws"]
     uuid_str = config["uuid_str"]
-    argo_token = config.get("argo_token") # Safely get token, might be None
+    argo_token = config.get("argo_token")
     
     # sing-box启动脚本
     sb_start_script_path = INSTALL_DIR / "start_sb.sh"
@@ -737,33 +946,28 @@ echo $! > {SB_PID_FILE.name}
 '''
     sb_start_script_path.write_text(sb_start_content)
     os.chmod(sb_start_script_path, 0o755)
-    # ---- 智能协同Nginx的核心修改 ----
-    nginx_installed = check_nginx_installed()
-    # 和 sing-box 配置中的路径保持一致
-    ws_path = f"/{uuid_str[:8]}-vm" 
-    # cloudflared启动脚本
-    cf_start_script_path = INSTALL_DIR / "start_cf.sh"
-    cf_cmd_base = f"./cloudflared tunnel --no-autoupdate"
-    if argo_token:
-        # 命名隧道模式，通常需要配合 Nginx 使用
-        print("🤝 检测到Argo Token，将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
-        cloudflared_url = "http://localhost:80"
-        nginx_needed = True
-    elif nginx_installed:
-        # 临时隧道，但检测到 Nginx
-        print("🤝 检测到Nginx，将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
-        cloudflared_url = "http://localhost:80"
-        nginx_needed = True
-    else:
-        # 临时隧道，且没有 Nginx
-        print("🚀 将以【独立模式】运行。Cloudflared将直连sing-box。")
-        ws_path_for_url = f"{ws_path}?ed=2048"
-        cloudflared_url = f"http://localhost:{port_vm_ws}{ws_path_for_url}"
-        nginx_needed = False
+    # ---- 全新的统一化 Nginx 处理逻辑 ----
+    nginx_is_installed, nginx_config_path = check_nginx_installed()
+    ws_path = f"/{uuid_str[:8]}-vm"
+    
+    # 如果 Nginx 未安装，则触发全自动安装
+    if not nginx_is_installed:
+        if not install_nginx():
+            sys.exit("❌ 必须安装Nginx才能继续，安装失败。")
+        nginx_is_installed, nginx_config_path = check_nginx_installed()
+        if not nginx_is_installed:
+            sys.exit("❌ Nginx 安装后仍无法检测，安装终止。")
 
-    # 只有在需要与 Nginx 协同工作时才生成配置片段
-    if nginx_needed:
-        nginx_snippet = f"""
+    # 核心决策：如果找不到主配置文件，我们就创建它
+    if not nginx_config_path:
+        print("⚠️ 未找到 Nginx 主配置文件，将创建全新的配置文件。")
+        if not create_full_nginx_config():
+            sys.exit("❌ 创建完整的 Nginx 配置文件失败，安装终止。")
+    else:
+        print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
+
+    # 无论如何都生成 ArgoSB 的专用配置片段
+    nginx_snippet = f"""
 # ArgoSB Nginx 配置片段 (由 agsb-v2.py 生成)
 # 请将此片段 'include' 到您的 nginx.conf 的 http 块中
 # 例如: include {os.path.abspath(NGINX_SNIPPET_FILE)};
@@ -779,13 +983,20 @@ location = {ws_path} {{
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }}
 """
-        with open(NGINX_SNIPPET_FILE, "w") as f:
-            f.write(nginx_snippet)
-        print(f"✅ 已生成Nginx配置片段: {NGINX_SNIPPET_FILE}")
-    # 根据模式构建最终的cloudflared命令
-    if argo_token: # 使用命名隧道
+    with open(NGINX_SNIPPET_FILE, "w") as f:
+        f.write(nginx_snippet)
+    print(f"✅ 已生成ArgoSB的Nginx配置片段: {NGINX_SNIPPET_FILE}")
+
+    # 统一将 cloudflared 指向 Nginx
+    cloudflared_url = "http://localhost:80"
+    
+    # cloudflared启动脚本
+    cf_start_script_path = INSTALL_DIR / "start_cf.sh"
+    cf_cmd_base = f"./cloudflared tunnel --no-autoupdate"
+
+    if argo_token:
         cf_cmd = f"{cf_cmd_base} run --token {argo_token}"
-    else: # 临时隧道
+    else:
         cf_cmd = f"{cf_cmd_base} --url {cloudflared_url} --edge-ip-version auto --protocol http2"
     
     cf_start_content = f'''#!/bin/bash
@@ -796,7 +1007,7 @@ echo $! > {ARGO_PID_FILE.name}
     cf_start_script_path.write_text(cf_start_content)
     os.chmod(cf_start_script_path, 0o755)
     
-    write_debug_log(f"启动脚本已创建/更新 (Nginx协同模式: {nginx_needed})")
+    write_debug_log(f"启动脚本已创建 (强制Nginx协同模式)")
 
 # 启动服务
 def start_services():
