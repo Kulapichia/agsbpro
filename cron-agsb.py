@@ -1040,19 +1040,18 @@ cd {INSTALL_DIR}
 ./sing-box run -c sb.json > sb.log 2>&1 & echo $! > sbpid.log
 ''')
     os.chmod(str(sb_start_script), 0o755)
-    # ---- 智能协同Nginx的核心修改 ----
-    nginx_installed = check_nginx_installed()
-    # 和 sing-box 配置中的路径保持一致
-    ws_path = f"/{uuid_str}-vm"    
-    # 创建cloudflared启动脚本
-    cf_start_script = INSTALL_DIR / "start_cf.sh"
-    if nginx_installed:
-        print("🤝 将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
-        # 模式一：有Nginx，让cloudflared将所有流量指向Nginx的80端口
-        cloudflared_url = "http://localhost:80"
-        
-        # 生成Nginx配置片段
-        nginx_snippet = f"""
+    # ---- 全新的统一化 Nginx 处理逻辑 (更智能) ----
+    nginx_is_installed, nginx_config_path = check_nginx_installed()
+    ws_path = f"/{uuid_str}-vm"
+    
+    if not nginx_is_installed:
+        if not install_nginx():
+            sys.exit("❌ 必须安装Nginx才能继续，安装失败。")
+        nginx_is_installed, nginx_config_path = check_nginx_installed()
+        if not nginx_is_installed:
+            sys.exit("❌ Nginx 安装后仍无法检测，安装终止。")
+    # 生成Nginx配置片段
+    nginx_snippet = f"""
 # ArgoSB Nginx 配置片段
 # 请将此片段 'include' 到您的 nginx.conf 的 http 块中
 # 例如: include {os.path.abspath(NGINX_SNIPPET_FILE)};
@@ -1067,16 +1066,20 @@ location = {ws_path} {{
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
 }}
 """
-        with open(NGINX_SNIPPET_FILE, "w") as f:
-            f.write(nginx_snippet)
-        print(f"✅ 已生成Nginx配置片段: {NGINX_SNIPPET_FILE}")
-        
+    with open(NGINX_SNIPPET_FILE, "w") as f:
+        f.write(nginx_snippet)
+    print(f"✅ 已生成ArgoSB的Nginx配置片段: {NGINX_SNIPPET_FILE}")
+
+    if not nginx_config_path:
+        print("⚠️ 未找到 Nginx 主配置文件，将创建全新的配置文件。")
+        if not create_full_nginx_config():
+            sys.exit("❌ 创建完整的 Nginx 配置文件失败，安装终止。")
     else:
-        # 模式二：没有Nginx，cloudflared直接指向sing-box
-        print("🚀 将以【独立模式】运行。Cloudflared将直连sing-box。")
-        # cloudflared直连时需要完整的URL路径
-        ws_path_full = f"{ws_path}?ed=2048"
-        cloudflared_url = f"http://localhost:{port_vm_ws}{ws_path_full}"
+        print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
+
+    cloudflared_url = "http://localhost:80"
+
+    cf_start_script = INSTALL_DIR / "start_cf.sh"
     with open(str(cf_start_script), 'w') as f:
         # 使用灵活的--url参数
         f.write(f'''#!/bin/bash
@@ -1085,7 +1088,7 @@ cd {INSTALL_DIR}
 ''')
     os.chmod(str(cf_start_script), 0o755)
     
-    write_debug_log(f"启动脚本已创建 (Nginx协同模式: {nginx_installed})")
+    write_debug_log("启动脚本已创建 (强制Nginx协同模式)")
 
 # 启动服务
 def start_services():
