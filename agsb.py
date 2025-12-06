@@ -30,19 +30,46 @@ DEBUG_LOG = INSTALL_DIR / "python_debug.log"
 NGINX_SNIPPET_FILE = INSTALL_DIR / "nginx_agsb_snippet.conf" # 用于存放生成的Nginx配置片段
 
 def check_nginx_installed():
-    """检查系统中是否安装了Nginx"""
-    # 使用 shutil.which 检查 nginx 命令是否存在于 PATH 中
-    if shutil.which('nginx'):
-        try:
-            # 进一步通过版本号确认
-            result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
-            if "nginx version" in result.stdout:
-                print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
-                return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    print("ℹ️ 未检测到 Nginx。")
-    return False
+    """
+    检查系统中是否安装了Nginx，并尝试定位主配置文件。
+    返回一个元组 (is_installed, config_path)。
+    """
+    if not shutil.which('nginx'):
+        print("ℹ️ 未在 PATH 中检测到 Nginx。")
+        return False, None
+
+    # 尝试通过 nginx -v 确认
+    try:
+        result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
+        if "nginx version" not in result.stdout:
+            print("ℹ️ nginx 命令存在，但版本信息无法识别。")
+            return False, None
+        print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("ℹ️ 未能成功执行 nginx -v。")
+        return False, None
+
+    # 定义所有可能的 Nginx 主配置文件路径
+    possible_config_paths = [
+        '/etc/nginx/nginx.conf',         # Debian, Ubuntu, RHEL, CentOS
+        '/usr/local/nginx/conf/nginx.conf', # 从源码编译的默认路径
+        '/usr/local/etc/nginx/nginx.conf',  # Homebrew on macOS
+        '/opt/homebrew/etc/nginx/nginx.conf', # Homebrew on Apple Silicon
+        '/etc/nginx/conf/nginx.conf'      # 某些旧系统或自定义路径
+    ]
+    
+    # 查找存在的配置文件
+    found_config_path = None
+    for path in possible_config_paths:
+        if os.path.exists(path):
+            found_config_path = path
+            print(f"🔍 发现已存在的 Nginx 主配置文件: {found_config_path}")
+            break
+            
+    if not found_config_path:
+        print("🤔 Nginx 已安装，但未在标准路径找到主配置文件。")
+
+    return True, found_config_path
 
 # 网络请求函数
 def http_get(url, timeout=10):
@@ -903,6 +930,197 @@ def create_sing_box_config(port_vm_ws, uuid_str):
     
     return True
 
+# ==============================================================================
+# ============================ 新增的辅助函数 ===================================
+# ==============================================================================
+
+def install_nginx():
+    """使用系统包管理器安装Nginx"""
+    print("🔧 未检测到 Nginx，正在尝试自动安装...")
+    package_manager = None
+    if shutil.which('apt-get'):
+        package_manager = 'apt-get'
+    elif shutil.which('yum'):
+        package_manager = 'yum'
+    elif shutil.which('dnf'):
+        package_manager = 'dnf'
+
+    if package_manager:
+        try:
+            # 更新包列表（对apt很重要）
+            if package_manager == 'apt-get':
+                subprocess.run(['sudo', package_manager, 'update'], check=True, capture_output=True)
+            # 安装Nginx
+            subprocess.run(['sudo', package_manager, 'install', '-y', 'nginx'], check=True, capture_output=True)
+            print("✅ Nginx 安装成功。")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"❌ Nginx 自动安装失败: {e}")
+            print("   请手动安装 Nginx 后重新运行脚本: 'sudo apt install nginx' 或 'sudo yum install nginx'")
+            return False
+    else:
+        print("❌ 未能识别系统包管理器 (apt/yum/dnf)，无法自动安装 Nginx。")
+        print("   请手动安装 Nginx 后重新运行脚本。")
+        return False
+
+def create_full_nginx_config(ws_path, port_vm_ws):
+    """
+    当服务器上没有nginx.conf时，创建您提供的功能完备的nginx.conf。
+    注意：这里使用了硬编码的模板，包含了您提供的所有业务逻辑。
+    """
+    print("📝 正在创建功能完备的 Nginx 主配置文件...")
+    
+    # 获取您提供的nginx.conf中的所有域名，用于动态生成证书map
+    # 注意：这里我们硬编码了您配置中的域名，实际应用中可能需要更灵活的方式
+    hysteria_domain = "hy2.xxxxx.com"
+    vpn_domain = "vpn.xxxxx.com"
+    argosb_domain = "argosb.xxxxx.com"
+
+    # 将您的 nginx.conf 文件内容作为模板字符串
+    # 使用 f-string 动态填充 ArgoSB 的 location 块
+    nginx_config_template = f"""
+# --- Nginx 全局配置 (由脚本自动生成) ---
+user nginx;
+pid /run/nginx.pid;
+worker_processes auto;
+
+error_log /var/log/nginx/error.log warn;
+
+events {{
+    worker_connections 1024;
+}}
+
+http {{
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile      on;
+    tcp_nopush    on;
+    keepalive_timeout 65;
+
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+
+    map $http_upgrade $connection_upgrade {{
+        default upgrade;
+        ''      close;
+    }}
+
+    map $host $ssl_certificate_file {{
+        {hysteria_domain}       /root/.hysteria2/cert/server.crt;
+        {vpn_domain}       /root/.hysteria2/cert/server.crt;
+        {argosb_domain}    /opt/xxxxx.pem;
+        default             /root/.hysteria2/cert/server.crt;
+    }}
+
+    map $host $ssl_certificate_key_file {{
+        {hysteria_domain}       /root/.hysteria2/cert/server.key;
+        {vpn_domain}       /root/.hysteria2/cert/server.key;
+        {argosb_domain}    /opt/xxxxx.key;
+        default             /root/.hysteria2/cert/server.key;
+    }}
+
+    # ------------------- ArgoSB Location Block (动态生成) -----------------
+    server {{
+        listen 127.0.0.1:80; # 只监听本地，用于接收Cloudflared的流量
+
+        location = {ws_path} {{
+            proxy_pass http://127.0.0.1:{port_vm_ws};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }}
+        
+        # 对于非ArgoSB的流量，可以返回一个错误或重定向
+        location / {{
+            return 404;
+        }}
+    }}
+    # ----------------------------------------------------------------------
+    
+    server {{
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+
+        server_name {argosb_domain} {hysteria_domain} {vpn_domain} _; 
+
+        ssl_certificate         $ssl_certificate_file;
+        ssl_certificate_key     $ssl_certificate_key_file;
+        ssl_protocols           TLSv1.2 TLSv1.3;
+
+        location / {{
+            if ($host = "{vpn_domain}") {{
+                if ($request_uri ~* \\.(yaml|txt|json)$) {{
+                    add_header Content-Disposition 'attachment';
+                }}
+                proxy_pass http://127.0.0.1:8085;
+                # ... 其他 proxy 设置
+            }}
+
+            if ($host = "{argosb_domain}") {{
+                root /var/www/html/argosb;
+                index index.html;
+                try_files $uri $uri/ =404;
+            }}
+            
+            if ($host = "{hysteria_domain}" or $host = $server_addr) {{
+                root /root/.hysteria2/web;
+                index index.html;
+                try_files $uri $uri/ =404;
+            }}
+            
+            return 404;
+        }}
+    }}
+    
+    server {{
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        
+        server_name _;
+        
+        return 301 https://$host$request_uri;
+    }}
+}}
+"""
+    try:
+        # 使用临时文件写入，然后用sudo移动，避免权限问题
+        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+            tmp.write(nginx_config_template)
+            tmp_path = tmp.name
+        
+        # 备份现有的nginx.conf（如果存在）
+        if os.path.exists('/etc/nginx/nginx.conf'):
+            subprocess.run(['sudo', 'mv', '/etc/nginx/nginx.conf', '/etc/nginx/nginx.conf.backup'], check=True)
+            print("   -> 已备份原始 /etc/nginx/nginx.conf 为 .backup 文件")
+
+        # 将我们生成的完整配置移动到正确位置
+        subprocess.run(['sudo', 'mv', tmp_path, '/etc/nginx/nginx.conf'], check=True)
+        print("✅ 已成功创建并写入 /etc/nginx/nginx.conf")
+
+        # 测试并重载Nginx
+        print("   -> 正在测试新的 Nginx 配置...")
+        test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+        if test_result.returncode != 0:
+            print("❌ 新生成的 Nginx 配置测试失败，正在恢复备份...")
+            print(test_result.stderr)
+            subprocess.run(['sudo', 'mv', '/etc/nginx/nginx.conf.backup', '/etc/nginx/nginx.conf'], check=True)
+            return False
+
+        print("   -> 正在重载 Nginx 服务...")
+        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+        print("✅ Nginx 已成功应用新配置。")
+        return True
+
+    except Exception as e:
+        print(f"❌ 创建或应用 Nginx 配置时发生严重错误: {e}")
+        return False
+
 # 创建启动脚本
 def create_startup_script(port_vm_ws, uuid_str):
     # 创建sing-box启动脚本
@@ -913,18 +1131,32 @@ cd {INSTALL_DIR}
 ./sing-box run -c sb.json > sb.log 2>&1 & echo $! > sbpid.log
 ''')
     os.chmod(str(sb_start_script), 0o755)
-    # ---- 智能协同Nginx的核心修改 ----
-    nginx_installed = check_nginx_installed()
+    # ---- 全新的统一化 Nginx 处理逻辑 ----
+    nginx_is_installed, nginx_config_path = check_nginx_installed()
     ws_path = f"/{uuid_str}-vm"    
-    # 创建cloudflared启动脚本
-    cf_start_script = INSTALL_DIR / "start_cf.sh"
-    if nginx_installed:
-        print("🤝 将以【Nginx协同模式】运行。Cloudflared将指向Nginx。")
-        # 模式一：有Nginx，让cloudflared将所有流量指向Nginx的80端口
-        # Nginx将负责根据路径将流量转发给sing-box
-        cloudflared_url = "http://localhost:80"
+    
+    # 如果 Nginx 未安装，则触发全自动安装和配置流程
+    if not nginx_is_installed:
+        if not install_nginx():
+            sys.exit("❌ 必须安装Nginx才能继续。")
         
-        # 生成Nginx配置片段
+        # 安装后，再次检查以确认
+        nginx_is_installed, nginx_config_path = check_nginx_installed()
+        if not nginx_is_installed:
+            sys.exit("❌ Nginx 安装后仍无法检测，安装终止。")
+
+    # 至此，我们保证了 Nginx 至少是已安装的状态
+    
+    # 核心决策：如果找不到主配置文件，我们就创建它
+    if not nginx_config_path:
+        print("⚠️ 未找到 Nginx 主配置文件，将创建全新的配置文件。")
+        # 调用新函数创建您提供的完整配置文件
+        if not create_full_nginx_config(ws_path, port_vm_ws):
+            sys.exit("❌ 创建完整的 Nginx 配置文件失败，安装终止。")
+    else:
+        # 如果找到了主配置文件，则进入安全的“协同模式”，只生成片段
+        print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
+        # 生成 Nginx 配置片段
         nginx_snippet = f"""
 # ArgoSB Nginx 配置片段
 # 请将此片段 'include' 到您的 nginx.conf 的 http 块中
@@ -944,10 +1176,11 @@ location = {ws_path} {{
             f.write(nginx_snippet)
         print(f"✅ 已生成Nginx配置片段: {NGINX_SNIPPET_FILE}")
         
-    else:
-        # 模式二：没有Nginx，cloudflared直接指向sing-box
-        print("🚀 将以【独立模式】运行。Cloudflared将直连sing-box。")
-        cloudflared_url = f"http://localhost:{port_vm_ws}"
+    # 无论哪种情况，cloudflared 都应该指向 Nginx
+    cloudflared_url = "http://localhost:80"
+
+    # 创建 cloudflared 启动脚本
+    cf_start_script = INSTALL_DIR / "start_cf.sh"
     with open(str(cf_start_script), 'w') as f:
         # 使用更灵活的--url参数，不再拼接路径，因为路径管理交给Nginx或sing-box本身
         f.write(f'''#!/bin/bash
@@ -956,7 +1189,7 @@ cd {INSTALL_DIR}
 ''')
     os.chmod(str(cf_start_script), 0o755)
     
-    write_debug_log(f"启动脚本已创建 (Nginx协同模式: {nginx_installed})")
+    write_debug_log("启动脚本已创建 (强制Nginx协同模式)")
 
 # 启动服务
 def start_services():
