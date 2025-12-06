@@ -18,8 +18,11 @@ import getpass
 import tempfile
 
 def get_user_home():
-    """获取用户主目录"""
-    return str(Path.home())
+    """
+    修改核心功能：强制返回/root目录，以确保与现有nginx.conf路径匹配。
+    这解决了不同用户执行脚本导致路径不一致的问题。
+    """
+    return "/root"
 
 def get_system_info():
     """获取系统信息"""
@@ -191,17 +194,40 @@ def check_process_running(pid_file):
         return False
 
 def create_directories():
-    """创建必要的目录"""
-    home = get_user_home()
-    dirs = [
-        f"{home}/.hysteria2",
-        f"{home}/.hysteria2/cert",
-        f"{home}/.hysteria2/config",
-        f"{home}/.hysteria2/logs"
+    """创建必要的目录，并使用sudo来确保有权限在/root下创建"""
+    home = get_user_home()  # 这将返回 "/root"
+    base_dir = f"{home}/.hysteria2"
+    
+    # 检查基本目录是否存在，如果不存在则使用sudo创建
+    if not os.path.exists(base_dir):
+        print(f"🔧 目录 {base_dir} 不存在，使用sudo创建...")
+        try:
+            # 使用 -p 选项创建所有父目录
+            subprocess.run(['sudo', 'mkdir', '-p', base_dir], check=True)
+            # 创建后立即更改所有权，以便后续操作（如果需要）
+            # 获取当前执行脚本的真实用户，即使是sudo
+            current_user = os.getenv('SUDO_USER', getpass.getuser())
+            subprocess.run(['sudo', 'chown', '-R', f'{current_user}:{current_user}', home], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"❌ 使用sudo创建目录 {base_dir} 失败: {e}")
+            sys.exit(1)
+
+    # 对于子目录，也检查并使用sudo创建
+    sub_dirs = [
+        f"{base_dir}/cert",
+        f"{base_dir}/config",
+        f"{base_dir}/logs"
     ]
-    for d in dirs:
-        os.makedirs(d, exist_ok=True)
-    return dirs[0]
+    
+    for d in sub_dirs:
+        if not os.path.exists(d):
+            try:
+                subprocess.run(['sudo', 'mkdir', '-p', d], check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"❌ 使用sudo创建子目录 {d} 失败: {e}")
+                sys.exit(1)
+
+    return base_dir
 
 def download_file(url, save_path, max_retries=3):
     """下载文件，带重试机制"""
@@ -2997,7 +3023,7 @@ http:
 
 def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key_path, port):
     """
-    配置nginx Web伪装的简化版本
+    配置nginx Web伪装的简化版本 - 增强了协同模式的逻辑和提示
     """
     # ====== 多路径智能模式检测 ======
     # 定义所有可能的Nginx主配置文件路径
@@ -3019,10 +3045,27 @@ def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key
     if found_config_path:
         print(f"🔍 检测到已存在的Nginx主配置文件: {found_config_path}")
         print("🤝 将以【协同模式】运行，不会覆盖您的主配置或自动安装Nginx。")
-        print("💡 请确保您的Nginx配置已正确设置，能够处理伪装网站的流量。")
-        print("   - 伪装网站根目录: " + os.path.abspath(web_dir))
-        print("   - SSL证书路径: " + os.path.abspath(cert_path))
-        print("   - SSL私钥路径: " + os.path.abspath(key_path))
+        # --- 新增智能提示 ---
+        print("\n" + "="*60)
+        print("⚠️  重要提示：协同模式说明".center(60))
+        print("="*60)
+        print("脚本检测到您已有一个复杂的Nginx配置。为了保护您的设置，脚本不会进行任何修改。")
+        print("请您手动完成以下检查，以确保新部署的Hysteria2服务能正常工作：")
+        print("\n   1. \033[33m确认Hysteria2服务端口\033[0m:")
+        print(f"      - 新的Hysteria2服务正在监听UDP端口: \033[32m{port}\033[0m")
+        print("      - 请确保您的客户端配置已更新为此端口。")
+        
+        print("\n   2. \033[33m确认Nginx配置中的路径\033[0m:")
+        print("      - 本次部署的所有文件都已安装到 \033[32m/root/.hysteria2/\033[0m 目录。")
+        print("      - 请检查您的Nginx配置，确保以下路径正确：")
+        print(f"         - SSL证书:  \033[32m{os.path.abspath(cert_path)}\033[0m")
+        print(f"         - SSL私钥:   \033[32m{os.path.abspath(key_path)}\033[0m")
+        print(f"         - 伪装网站根目录: \033[32m{os.path.abspath(web_dir)}\033[0m")
+
+        print("\n   3. \033[33m重载Nginx使配置生效\033[0m:")
+        print("      - 如果您修改了Nginx配置，请执行以下命令使其生效：")
+        print("        \033[36msudo nginx -t && sudo systemctl reload nginx\033[0m")
+        print("="*60 + "\n")
         
         # 在协同模式下，我们只确保nginx服务在运行，然后重载它以应用可能的更改
         try:
@@ -3035,7 +3078,7 @@ def setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key
             print("🔄 正在尝试重载Nginx以确保配置生效...")
             test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
             if test_result.returncode != 0:
-                print("⚠️  警告: 您当前的Nginx配置测试失败，重载可能会失败。")
+                print("⚠️  警告: 您当前的Nginx配置测试失败，无法自动重载。")
                 print("\033[91m" + test_result.stderr.strip() + "\033[0m")
                 # 即使测试失败也继续，因为Hysteria2不依赖Nginx
             else:
