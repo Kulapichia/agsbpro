@@ -33,33 +33,6 @@ def get_user_home():
 get_system_info = lambda: (platform.system().lower(), shared_utils.get_system_arch())
 download_file = shared_utils.download_file
 
-def get_system_info():
-    """获取系统信息"""
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    
-    # 系统映射
-    os_map = {
-        'linux': 'linux',
-        'darwin': 'darwin',  # macOS
-        'windows': 'windows'
-    }
-    
-    # 架构映射
-    arch_map = {
-        'x86_64': 'amd64',
-        'amd64': 'amd64',
-        'aarch64': 'arm64',
-        'arm64': 'arm64',
-        'i386': '386',
-        'i686': '386'
-    }
-    
-    os_name = os_map.get(system, 'linux')
-    arch = arch_map.get(machine, 'amd64')
-    
-    return os_name, arch
-
 def ensure_nginx_user():
     """确保nginx用户存在，如果不存在就创建，统一使用nginx用户"""
     try:
@@ -237,20 +210,6 @@ def create_directories():
                 sys.exit(1)
 
     return base_dir
-
-def download_file(url, save_path, max_retries=3):
-    """下载文件，带重试机制"""
-    for i in range(max_retries):
-        try:
-            print(f"正在下载... (尝试 {i+1}/{max_retries})")
-            urllib.request.urlretrieve(url, save_path)
-            return True
-        except Exception as e:
-            print(f"下载失败: {e}")
-            if i < max_retries - 1:
-                time.sleep(2)  # 等待2秒后重试
-            continue
-    return False
 
 def get_latest_version():
     """通过 GitHub API 动态获取最新的 Hysteria2 版本号"""
