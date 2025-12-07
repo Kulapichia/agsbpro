@@ -1,6 +1,14 @@
 #!/bin/bash
 
-ROOT_PASSWORD="acW8E!X#hX0ktRMs"
+# 检查是否提供了密码参数
+if [ -z "$1" ]; then
+    echo "错误: 请提供要设置的root密码作为第一个参数。"
+    echo "用法: ./gcp-passwd-set.sh 'YourNewSecurePassword'"
+    exit 1
+fi
+
+# 从第一个命令行参数获取密码
+ROOT_PASSWORD="$1"
 PROJECT_ID=$(gcloud config get-value project)
 MAX_CONCURRENT=12  # 最大并发数
 
@@ -26,7 +34,9 @@ echo ""
 echo "总共找到 ${#instance_list[@]} 个实例，开始并行修复..."
 
 # 创建增强的修复脚本
-cat > /tmp/fix_ssh_enhanced.sh << 'EOF'
+# 使用 EOF 前的 '-' 可以允许我们缩进 heredoc 内容，更美观
+# 使用 cat <<EOF 而不是 cat <<'EOF' 以便替换变量 $ROOT_PASSWORD
+cat > /tmp/fix_ssh_enhanced.sh <<EOF
 #!/bin/bash
 set -e  # 遇到错误立即退出
 
@@ -34,8 +44,9 @@ echo "=== 开始增强SSH配置修复 ==="
 
 # 设置root密码
 echo "步骤1: 设置root密码..."
-echo "root:acW8E!X#hX0ktRMs" | sudo chpasswd
-if [ $? -eq 0 ]; then
+# 使用从父脚本传入的密码
+echo "root:${ROOT_PASSWORD}" | sudo chpasswd
+if [ \$? -eq 0 ]; then
     echo "✅ root密码设置成功"
 else
     echo "❌ root密码设置失败"
