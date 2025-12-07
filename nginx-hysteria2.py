@@ -3430,30 +3430,38 @@ def setup_nginx_web_masquerade(base_dir, domain, web_dir, cert_path, key_path, p
     
     if not nginx_is_installed:
         if not install_nginx():
-            sys.exit("❌ 必须安装Nginx才能继续，安装失败。")
+            print("❌ Nginx 安装失败，Web伪装不可用。")
+            return False
+        # 重新检查
         nginx_is_installed, nginx_config_path = check_nginx_installed()
         if not nginx_is_installed:
-            sys.exit("❌ Nginx 安装后仍无法检测，安装终止。")
+            print("❌ Nginx 安装后仍无法检测，安装终止。")
+            return False
 
+    # 核心决策：如果找不到主配置文件，我们就创建它
     if not nginx_config_path:
         print("⚠️ 未找到 Nginx 主配置文件，将创建全新的配置文件。")
         if not create_full_nginx_config():
-            sys.exit("❌ 创建完整的 Nginx 配置文件失败，安装终止。")
+            print("❌ 创建完整的 Nginx 配置文件失败。")
+            return False
     else:
         print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
-        print("   脚本不会修改您的主配置，请确保已正确配置以包含所有服务。")
+        print("   脚本不会修改您的主配置，请确保已正确配置以支持所有服务。")
+        print("   Hysteria2的证书和Web路径信息已写入共享配置，可供您手动配置Nginx时参考。")
 
+    # 无论如何都尝试重载Nginx
+
+    # 无论如何都尝试重载Nginx
     try:
-        print("   -> 正在测试 Nginx 配置...")
+        print("   -> 正在测试并重载 Nginx 配置...")
         test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
         if test_result.returncode != 0:
-            print("❌ Nginx 配置测试失败。")
+            print("❌ Nginx 配置测试失败，无法自动重载。请手动检查配置。")
             print(test_result.stderr)
-            return False
+            return True # 即使重载失败，也认为协同模式设置成功，不中断主流程
 
-        print("   -> 正在重载 Nginx 服务...")
         subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
-        print("✅ Nginx 已成功应用新配置。")
+        print("✅ Nginx 已成功重载。")
         return True
     except Exception as e:
         print(f"❌ 重载 Nginx 时发生错误: {e}")
