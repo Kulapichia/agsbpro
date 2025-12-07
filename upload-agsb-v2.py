@@ -752,87 +752,57 @@ def install(args):
     create_startup_script() # Now reads from config for token
     setup_autostart()
     start_services()
-    # --- 生成链接和上传 ---
-    all_links = []
+    # --- 获取域名，配置Nginx，生成并上传链接 ---
     final_domain = custom_domain
     if not argo_token and not custom_domain: # Quick tunnel and no pre-set domain
         print("正在等待临时隧道域名生成...")
         final_domain = get_tunnel_domain()
         if not final_domain:
             print("\033[31m无法获取tunnel域名。请检查argo.log或尝试手动指定域名。\033[0m")
-            print("  方法1: python3 " + os.path.basename(__file__) + " --agn your-domain.com")
-            print("  方法2: export agn=your-domain.com && python3 " + os.path.basename(__file__))
             sys.exit(1)
-    elif argo_token and not custom_domain: # Should have exited earlier, but as a safeguard
+        # 获取域名后更新配置文件
+        config_data["custom_domain_agn"] = final_domain
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config_data, f, indent=2)
+    
+    elif argo_token and not custom_domain:
         print("\033[31m错误: 使用Argo Token时，自定义域名是必需的但未提供。\033[0m")
         sys.exit(1)
+
     if final_domain:
         # 将服务信息写入共享配置
         ws_path = f"/{uuid_str[:8]}-vm"
         argosb_service_data = {
-            "domain": final_domain, "ws_path": ws_path, "internal_port": port_vm_ws, "type": "argosb"
+            "domain": final_domain,
+            "ws_path": ws_path,
+            "internal_port": port_vm_ws,
+            "type": "argosb",
+            "web_root": "/var/www/html/argosb"  # 提供伪装路径
         }
         update_shared_config("argosb", argosb_service_data)
-
+        
         # 检查并配置Nginx
         nginx_is_installed, nginx_config_path = check_nginx_installed()
         if not nginx_is_installed:
             if not install_nginx():
-                print("❌ Nginx安装失败，但服务仍可独立运行。")
+                print("❌ Nginx安装失败，Web伪装和多服务共存不可用。")
         elif not nginx_config_path:
             print("⚠️ Nginx已安装但未找到主配置文件，将创建全新的配置文件。")
             create_full_nginx_config()
-        # 生成所有节点链接
-        all_links = []
-        ws_path = f"/{uuid_str[:8]}-vm"
-        ws_path_full = f"{ws_path}?ed=2048"
-        hostname = socket.gethostname()[:10]
-        cf_ips_tls = {
-            "104.16.0.0": "443", "104.17.0.0": "8443", "104.18.0.0": "2053",
-            "104.19.0.0": "2083", "104.20.0.0": "2087"
-        }
-        cf_ips_http = {
-            "104.21.0.0": "80", "104.22.0.0": "8085", "104.24.0.0": "8880"
-        }
-        for ip, port_cf in cf_ips_tls.items():
-            config = {
-                "ps": f"VMWS-TLS-{hostname}-{ip.split('.')[2]}-{port_cf}", "add": ip, "port": port_cf, "id": uuid_str, "aid": "0",
-                "net": "ws", "type": "none", "host": final_domain, "path": ws_path_full,
-                "tls": "tls", "sni": final_domain
-            }
-            all_links.append(generate_vmess_link(config))
-        for ip, port_cf in cf_ips_http.items():
-            config = {
-                "ps": f"VMWS-HTTP-{hostname}-{ip.split('.')[2]}-{port_cf}", "add": ip, "port": port_cf, "id": uuid_str, "aid": "0",
-                "net": "ws", "type": "none", "host": final_domain, "path": ws_path_full,
-                "tls": ""
-            }
-            all_links.append(generate_vmess_link(config))
-        direct_tls_config = {
-            "ps": f"VMWS-TLS-{hostname}-Direct-{final_domain[:15]}-443",
-            "add": final_domain, "port": "443", "id": uuid_str, "aid": "0",
-            "net": "ws", "type": "none", "host": final_domain, "path": ws_path_full,
-            "tls": "tls", "sni": final_domain
-        }
-        all_links.append(generate_vmess_link(direct_tls_config))
-        direct_http_config = {
-            "ps": f"VMWS-HTTP-{hostname}-Direct-{final_domain[:15]}-80",
-            "add": final_domain, "port": "80", "id": uuid_str, "aid": "0",
-            "net": "ws", "type": "none", "host": final_domain, "path": ws_path_full,
-            "tls": ""
-        }
-        all_links.append(generate_vmess_link(direct_http_config))
-        # 上传到API
-        all_links_b64 = base64.b64encode("\n".join(all_links).encode()).decode()
-        # 获取生成的链接用于上传
-        all_links_content = (INSTALL_DIR / "allnodes.txt").read_text()
-        all_links_b64 = base64.b64encode(all_links_content.encode()).decode()
-        
-        # 恢复对 upload_to_api 的调用
-        if 'upload_to_api' in globals():
-            upload_to_api(all_links_b64, user_name)
-        # 继续原有的节点文件保存和打印逻辑
+
+        # 生成所有链接和相关文件
         generate_links(final_domain, port_vm_ws, uuid_str)
+        # 从已生成的文件中读取内容并上传
+        all_nodes_path = INSTALL_DIR / "allnodes.txt"
+        if all_nodes_path.exists():
+            all_links_content = all_nodes_path.read_text().strip()
+            if all_links_content:
+                print("\n正在上传订阅链接到服务器...")
+                upload_to_api(all_links_content, user_name) # 直接上传明文，API端处理编码
+            else:
+                print("⚠️ 节点文件为空，跳过上传。")
+        else:
+            print("⚠️ 节点文件未生成，无法上传。")
     else:
         print("\033[31m最终域名未能确定，无法生成链接。\033[0m")
         sys.exit(1)
