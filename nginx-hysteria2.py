@@ -2853,6 +2853,7 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
     # 5. 创建Web伪装文件
     web_dir = create_web_masquerade(base_dir)
     print(f"✅ 创建Web伪装：{web_dir}")
+    
     # 5.5 注册Hysteria2和文件下载服务信息到共享配置
     hysteria2_service_data = {
         "domain": server_address,
@@ -2869,6 +2870,7 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
         "type": "vpn_fileserver"
     }
     update_shared_config("vpn_fileserver", vpn_service_data)    
+    
     # 6. 创建Hysteria2配置（端口跳跃+混淆+HTTP/3伪装）
     hysteria_config = {
         "listen": f":{port}",
@@ -2910,8 +2912,9 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
     print(f"✅ 创建配置：{config_path}")
     
     # 7. 配置端口跳跃（iptables）
+    # 初始化变量以防port_range为空
+    port_start, port_end = None, None
     if port_range:
-        # 使用用户指定的端口范围
         port_start, port_end = parse_port_range(port_range)
         if port_start is None or port_end is None:
             print("❌ 端口范围解析失败，使用默认范围")
@@ -2920,18 +2923,19 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
             if port < 1049:
                 port_start = 1024
                 port_end = 1074
-    else:
-        # 使用默认端口范围
+    else: # 当 port_range 未提供时
         port_start = max(1024, port - 25)
         port_end = min(65535, port + 25)
         if port < 1049:
             port_start = 1024
             port_end = 1074
-    
-    success = setup_port_hopping_iptables(port_start, port_end, port)
-    if success:
-        print(f"✅ 端口跳跃：{port_start}-{port_end} → {port}")
-    
+            
+    # 仅当确定要进行端口跳跃时才调用iptables配置
+    if args.port_hopping or args.simple or args.one_click or port_range:
+        success = setup_port_hopping_iptables(port_start, port_end, port)
+        if success:
+            print(f"✅ 端口跳跃：{port_start}-{port_end} → {port}")
+
     # 8. BBR优化（如果启用）
     if enable_bbr:
         bbr_success = enable_bbr_optimization()
@@ -2939,27 +2943,16 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
             print("✅ BBR拥塞控制优化已启用")
         else:
             print("⚠️ BBR优化失败，但不影响主要功能")
-    
-    # 9. 创建并启动Hysteria2服务 (修改为 Systemd 方式)
-    # start_script = create_service_script(base_dir, binary_path, config_path, port) # 不再需要临时脚本
-    # service_started = start_service(start_script, port, base_dir) # 注释掉临时的 nohup 启动方式
-    # if service_started:
-    #     print(f"✅ Hysteria2服务启动成功")
-    
-    # 新增: 自动化配置 Systemd 服务，如果失败则回退到 nohup
+ 
+    # 9. 自动化配置 Systemd 服务，如果失败则回退到 nohup
     systemd_success = create_and_enable_systemd_services(base_dir, binary_path, config_path)
     if not systemd_success:
         # 如果 Systemd 配置失败，则执行原有的 nohup 启动方式作为备选方案
         print("   -> ⚠️ Systemd 配置失败，回退到临时的 nohup 启动方式...")
         start_script = create_service_script(base_dir, binary_path, config_path, port)
         start_service(start_script, port, base_dir)
-    
-    # 10. 配置nginx Web伪装
-    nginx_success = setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key_path, port)
-    if nginx_success:
-        print(f"✅ nginx Web伪装配置成功")
-    
-    # 11. 生成客户端配置
+
+    # 10. 生成客户端配置
     insecure = "1" if not enable_real_cert else "0"
     params = [
         f"insecure={insecure}",
@@ -2972,7 +2965,8 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
     config_link = f"hysteria2://{urllib.parse.quote(password)}@{server_address}:{port}?{'&'.join(params)}"
     
     # 如果启用了端口跳跃，生成额外的JSON配置
-    if port_range:
+    port_hopping_config = None # 初始化为None
+    if port_range and port_start is not None:
         port_hopping_config = {
             "server": server_address,
             "auth": password,
@@ -2993,9 +2987,17 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
                 }
             }
         }
-    
+
+    # 11. [修正] 将Nginx配置作为最后一步，确保所有服务已配置并信息已写入
+    print("\n[最终步骤] 正在配置和验证Nginx...")
+    nginx_success = setup_nginx_web_masquerade(base_dir, server_address, web_dir, cert_path, key_path, port)
+    if nginx_success:
+        print(f"✅ Nginx 最终配置/验证完成。")
+    else:
+        print(f"⚠️ Nginx 配置或重载失败，Web伪装可能无法正常工作。")
+
     # 12. 输出部署结果
-    if port_range:
+    if port_range and port_start is not None:
         # 准备下载链接
         download_links = {
             "v2rayN多端口订阅 (推荐)": f"http://{server_address}:8085/v2rayn-subscription.txt",
@@ -3010,15 +3012,17 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
         
         # 计算端口范围和选择端口
         import random
-        port_range = list(range(port_start, port_end + 1))
+        # 注意：这里的 port_range 是用户输入的字符串，可能为None
+        # 我们使用已经计算好的 port_start 和 port_end
+        actual_port_range = list(range(port_start, port_end + 1))
         num_configs = 100
         
-        if len(port_range) > num_configs:
-            selected_ports = random.sample(port_range, num_configs)
+        if len(actual_port_range) > num_configs:
+            selected_ports = random.sample(actual_port_range, num_configs)
         else:
-            selected_ports = port_range
+            selected_ports = actual_port_range
         
-        selected_ports.sort()  # 排序便于查看
+        selected_ports.sort()
         num_ports = len(selected_ports)
         
         # 生成v2rayN订阅文件
@@ -3027,25 +3031,15 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
         )
         print(f"✅ 已生成 {num_ports} 个端口的配置节点")
         
-        # 使用统一输出函数
-        show_final_summary(
-            server_address=server_address,
-            port=port,
-            port_range=f"{port_start}-{port_end}",
-            password=password,
-            obfs_password=obfs_password,
-            config_link=config_link,
-            enable_port_hopping=True,
-            download_links=download_links,
-            num_ports=num_ports
-        )
-        
         # 保存JSON配置文件
-        config_file = f"{base_dir}/client-config.json"
-        with open(config_file, 'w') as f:
-            json.dump(port_hopping_config, f, indent=2)
-        print(f"📄 端口跳跃JSON配置已保存到：{config_file}")
-        
+        config_file_path = f"{base_dir}/client-config.json"
+        if port_hopping_config:
+            with open(config_file_path, 'w') as f:
+                json.dump(port_hopping_config, f, indent=2)
+            print(f"📄 端口跳跃JSON配置已保存到：{config_file_path}")
+        else:
+            config_file_path = None
+
         # 生成v2rayN兼容配置（单一端口，因为v2rayN不支持端口跳跃）
         v2rayn_config = f"""# Hysteria2 v2rayN兼容配置 - 单一端口版本
 # 注意：v2rayN不支持端口跳跃功能，只能使用服务器的主监听端口
@@ -3231,7 +3225,21 @@ http:
         print(f"📄 客户端端口跳跃配置已保存到：{hysteria_client_hopping_file}")
         
         # 复制配置文件到nginx Web目录，提供下载
-        setup_config_download_service(server_address, v2rayn_file, clash_file, hysteria_official_file, hysteria_client_hopping_file, subscription_file, subscription_plain_file, config_file)
+        setup_config_download_service(server_address, v2rayn_file, clash_file, hysteria_official_file, hysteria_client_hopping_file, subscription_file, subscription_plain_file, config_file_path)
+        
+        # 使用统一输出函数
+        show_final_summary(
+            server_address=server_address,
+            port=port,
+            port_range=f"{port_start}-{port_end}",
+            password=password,
+            obfs_password=obfs_password,
+            config_link=config_link,
+            enable_port_hopping=True,
+            download_links=download_links,
+            num_ports=num_ports,
+            nginx_success=nginx_success
+        )
         
     else:
         # 使用统一输出函数
@@ -3243,18 +3251,23 @@ http:
             obfs_password=obfs_password,
             config_link=config_link,
             enable_port_hopping=False,
-            download_links=None
+            download_links=None,
+            num_ports=0,
+            nginx_success=nginx_success
         )
     
-    return {
+    return_dict = {
         "server": server_address,
         "port": port,
-        "port_range": f"{port_start}-{port_end}",
         "password": password,
         "obfs_password": obfs_password,
         "config_link": config_link,
         "nginx_success": nginx_success
     }
+    if port_range and port_start is not None:
+        return_dict["port_range"] = f"{port_start}-{port_end}"
+    
+    return return_dict
 
 def setup_nginx_web_masquerade(base_dir, domain, web_dir, cert_path, key_path, port):
     """
