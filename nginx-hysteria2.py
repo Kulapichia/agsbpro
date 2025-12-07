@@ -480,11 +480,19 @@ http {{
     sendfile on;
     keepalive_timeout 65;
     server_tokens off;
-    
+    # --- HTTP 到 HTTPS 的重定向服务 ---
     server {{
-        listen 80;
-        listen 443 ssl http2;
-        server_name _;
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _; # 匹配所有主机名
+        return 301 https://$host$request_uri;
+    }}
+    
+    # --- 主HTTPS服务 ---    
+    server {{
+        listen 443 ssl http2 default_server;
+        listen [::]:443 ssl http2 default_server;
+        server_name _; # 作为默认服务器
         
         ssl_certificate {os.path.abspath(cert_path)};
         ssl_certificate_key {os.path.abspath(key_path)};
