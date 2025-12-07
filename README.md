@@ -454,6 +454,42 @@ sudo systemctl status hysteria-server.service --no-pager
 sudo systemctl status hysteria-fileserver.service --no-pager
 ```
 如果两个服务都显示 `active (running)`，那么恭喜你，问题已成功解决！
+#### 第五步：命令查看各种状态
+
+1.  **检查服务状态**
+    ```bash
+    # 检查 Hysteria2 主代理服务
+    sudo systemctl status hysteria-server.service
+
+    # 检查配置文件下载服务
+    sudo systemctl status hysteria-fileserver.service
+    ```
+    > **期望结果**：两个服务的 `Active` 状态都应显示为绿色的 **`active (running)`**。
+
+2.  **查看实时日志**
+    ```bash
+    # 查看 Hysteria2 主服务的实时日志
+    sudo journalctl -u hysteria-server.service -f
+
+    # 查看文件下载服务的实时日志
+    sudo journalctl -u hysteria-fileserver.service -f
+    ```
+
+3.  **重启/停止服务**
+    ```bash
+    # 重启 Hysteria2 主服务
+    sudo systemctl restart hysteria-server.service
+
+    # 停止 Hysteria2 主服务
+    sudo systemctl stop hysteria-server.service
+    ```
+4.  **如果自动配置 Systemd 失败怎么办？**
+
+在极少数情况下（如在非标准的Linux发行版或权限极度受限的容器中），自动配置可能会失败。
+*   脚本会智能地**回退到临时的 `nohup` 启动方式**，保证服务在当前会话中可用。
+*   您可以参考下一节的 **[故障排除](#-故障排除)** 指南来解决 `systemd` 的相关问题。
+*   如果您不希望使用 `systemd`，可以在安装时添加 `--no-systemd` 参数，脚本将只使用临时的后台启动方式。
+
 
 ### 📋 基础命令
 
