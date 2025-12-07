@@ -28,8 +28,7 @@ def get_user_home():
 # ==============================================================================
 
 # 定义共享配置文件路径，放在.agsb目录外，便于多脚本访问
-SHARED_CONFIG_FILE = Path(get_user_home()) / ".all_services.json"
-
+SHARED_CONFIG_FILE = Path(get_user_home()).parent / ".all_services.json"
 def check_nginx_installed():
     """
     检查系统中是否安装了Nginx，并尝试定位主配置文件。
@@ -120,9 +119,16 @@ def install_nginx():
 def create_full_nginx_config():
     """动态读取所有服务配置，生成一个功能完备的nginx.conf"""
     print("📝 正在动态生成 Nginx 主配置文件...")
-    
-    shared_config = json.load(open(SHARED_CONFIG_FILE)) if SHARED_CONFIG_FILE.exists() else {}
-
+    if not SHARED_CONFIG_FILE.exists():
+        print("⚠️ 警告：未找到共享服务配置文件。生成的 Nginx 配置将不包含动态服务。")
+        shared_config = {}
+    else:
+        with open(SHARED_CONFIG_FILE, 'r') as f:
+            try:
+                shared_config = json.load(f)
+            except json.JSONDecodeError:
+                print(f"⚠️ 警告：共享配置文件 {SHARED_CONFIG_FILE} 损坏，将生成基础配置。")
+                shared_config = {}
     # --- 1. 动态构建 map 块和 server_name ---
     cert_map_lines, key_map_lines, server_names = [], [], []
     locations_443 = []
@@ -3448,8 +3454,6 @@ def setup_nginx_web_masquerade(base_dir, domain, web_dir, cert_path, key_path, p
         print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
         print("   脚本不会修改您的主配置，请确保已正确配置以支持所有服务。")
         print("   Hysteria2的证书和Web路径信息已写入共享配置，可供您手动配置Nginx时参考。")
-
-    # 无论如何都尝试重载Nginx
 
     # 无论如何都尝试重载Nginx
     try:
