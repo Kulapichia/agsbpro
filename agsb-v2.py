@@ -15,10 +15,14 @@ import platform
 from datetime import datetime
 import uuid
 from pathlib import Path
-import urllib.request
-import ssl
 import tempfile
-import argparse
+
+# 导入共享工具库
+try:
+    import shared_utils
+except ImportError:
+    print("错误：缺少共享工具库 'shared_utils.py'。请确保它与主脚本在同一目录下。")
+    sys.exit(1)
 
 # 全局变量
 INSTALL_DIR = Path.home() / ".agsb"  # 用户主目录下的隐藏文件夹，避免root权限
@@ -30,21 +34,13 @@ LOG_FILE = INSTALL_DIR / "argo.log"
 DEBUG_LOG = INSTALL_DIR / "python_debug.log"
 CUSTOM_DOMAIN_FILE = INSTALL_DIR / "custom_domain.txt" # 存储最终使用的域名
 NGINX_SNIPPET_FILE = INSTALL_DIR / "nginx_agsb_snippet.conf" # 用于存放生成的Nginx配置片段
-
-def check_nginx_installed():
-    """检查系统中是否安装了Nginx"""
-    # 使用 shutil.which 检查 nginx 命令是否存在于 PATH 中
-    if shutil.which('nginx'):
-        try:
-            # 进一步通过版本号确认
-            result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
-            if "nginx version" in result.stdout:
-                print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
-                return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    print("ℹ️ 未检测到 Nginx。")
-    return False
+# 使用共享工具库中的函数
+check_nginx_installed = shared_utils.check_nginx_installed
+http_get = shared_utils.http_get
+download_file = shared_utils.download_file
+download_binary = shared_utils.download_binary
+generate_vmess_link = shared_utils.generate_vmess_link
+get_system_arch = shared_utils.get_system_arch
 
 # 添加命令行参数解析
 def parse_args():
@@ -58,40 +54,6 @@ def parse_args():
     parser.add_argument("--agk", "--token", dest="agk", help="设置 Argo Tunnel Token (用于Cloudflare Zero Trust命名隧道)")
 
     return parser.parse_args()
-
-# 网络请求函数
-def http_get(url, timeout=10):
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as response:
-            return response.read().decode('utf-8')
-    except Exception as e:
-        print(f"HTTP请求失败: {url}, 错误: {e}")
-        write_debug_log(f"HTTP GET Error: {url}, {e}")
-        return None
-
-def download_file(url, target_path, mode='wb'):
-    try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, context=ctx) as response, open(target_path, mode) as out_file:
-            shutil.copyfileobj(response, out_file)
-        return True
-    except Exception as e:
-        print(f"下载文件失败: {url}, 错误: {e}")
-        write_debug_log(f"Download Error: {url}, {e}")
-        return False
 
 # 脚本信息
 def print_info():
@@ -137,40 +99,6 @@ def write_debug_log(message):
     except Exception as e:
         print(f"写入日志失败: {e}")
 
-# 下载二进制文件
-def download_binary(name, download_url, target_path):
-    print(f"正在下载 {name}...")
-    success = download_file(download_url, target_path)
-    if success:
-        print(f"{name} 下载成功!")
-        os.chmod(target_path, 0o755)
-        return True
-    else:
-        print(f"{name} 下载失败!")
-        return False
-
-# 生成VMess链接
-def generate_vmess_link(config):
-    vmess_obj = {
-        "v": "2",
-        "ps": config.get("ps", "ArgoSB"),
-        "add": config.get("add", ""),
-        "port": str(config.get("port", "443")), # 确保端口是字符串
-        "id": config.get("id", ""),
-        "aid": str(config.get("aid", "0")), # 确保aid是字符串
-        "net": config.get("net", "ws"),
-        "type": config.get("type", "none"),
-        "host": config.get("host", ""),
-        "path": config.get("path", ""),
-        "tls": config.get("tls", "tls"),
-        "sni": config.get("sni", "")
-    }
-    vmess_str = json.dumps(vmess_obj, sort_keys=True) # sort_keys确保一致性
-    vmess_b64 = base64.b64encode(vmess_str.encode('utf-8')).decode('utf-8').rstrip("=")
-    return f"vmess://{vmess_b64}"
-
-# 生成链接
-# 生成链接
 # 生成链接
 def generate_links(domain, port_vm_ws, uuid_str):
     write_debug_log(f"生成链接: domain={domain}, port_vm_ws={port_vm_ws}, uuid_str={uuid_str}")
@@ -399,19 +327,13 @@ def install(args):
 
 
     # --- 下载依赖 ---
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    arch = ""
-    if system == "linux":
-        if "x86_64" in machine or "amd64" in machine: arch = "amd64"
-        elif "aarch64" in machine or "arm64" in machine: arch = "arm64"
-        elif "armv7" in machine: arch = "arm" # cloudflared uses 'arm' for armv7
-        else: arch = "amd64"
-    else:
-        print(f"不支持的系统类型: {system}")
-        sys.exit(1)
-    write_debug_log(f"检测到系统: {system}, 架构: {machine}, 使用架构标识: {arch}")
-
+    # 调用共享函数获取通用架构标识
+    arch = get_system_arch()
+    
+    # 针对不同程序对 'armv7' 的特殊命名进行处理，这部分是应用相关的特殊逻辑，必须保留
+    sb_arch = "armv7" if arch == "armv7" else arch # sing-box 使用 'armv7'
+    cf_arch = "arm" if arch == "armv7" else arch   # cloudflared 使用 'arm'
+    write_debug_log(f"检测到通用架构: {arch}, sing-box适用架构: {sb_arch}, cloudflared适用架构: {cf_arch}")
     # sing-box
     singbox_path = INSTALL_DIR / "sing-box"
     if not singbox_path.exists():
@@ -424,10 +346,8 @@ def install(args):
             sb_version = "1.9.0-beta.11" # Fallback
             print(f"获取最新版本失败，使用默认版本: {sb_version}，错误: {e}")
         
-        sb_name = f"sing-box-{sb_version}-linux-{arch}"
-        # Armv7 for sing-box is usually armv7, not just arm
-        if arch == "arm": sb_name_actual = f"sing-box-{sb_version}-linux-armv7"
-        else: sb_name_actual = sb_name
+        # 使用处理过的 sb_arch
+        sb_name_actual = f"sing-box-{sb_version}-linux-{sb_arch}"
 
         sb_url = f"https://github.com/SagerNet/sing-box/releases/download/v{sb_version}/{sb_name_actual}.tar.gz"
         tar_path = INSTALL_DIR / "sing-box.tar.gz"
@@ -463,9 +383,7 @@ def install(args):
     # cloudflared
     cloudflared_path = INSTALL_DIR / "cloudflared"
     if not cloudflared_path.exists():
-        cf_arch = arch
-        if arch == "armv7": cf_arch = "arm" # cloudflared uses 'arm' for 32-bit arm
-        
+        # 使用处理过的 cf_arch 
         cf_url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{cf_arch}"
         if not download_binary("cloudflared", cf_url, cloudflared_path):
             print("cloudflared 下载失败，尝试使用备用地址")
