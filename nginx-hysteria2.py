@@ -16,13 +16,22 @@ import base64
 import random
 import getpass
 import tempfile
-
+# 导入共享工具库
+try:
+    import shared_utils
+except ImportError:
+    print("错误：缺少共享工具库 'shared_utils.py'。请确保它与主脚本在同一目录下。")
+    sys.exit(1)
 def get_user_home():
     """
     修改核心功能：强制返回/root目录，以确保与现有nginx.conf路径匹配。
     这解决了不同用户执行脚本导致路径不一致的问题。
     """
     return "/root"
+# 使用共享库函数
+# get_system_info 在此脚本中被重命名为 get_system_arch in shared_utils
+get_system_info = lambda: (platform.system().lower(), shared_utils.get_system_arch())
+download_file = shared_utils.download_file
 
 def get_system_info():
     """获取系统信息"""
