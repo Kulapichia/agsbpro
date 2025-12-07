@@ -17,28 +17,12 @@ import uuid
 from pathlib import Path
 import tempfile
 
-# 检查requests库是否安装，如果未安装则尝试安装
-try:
-    import requests
-except ImportError:
-    print("检测到未安装requests库，正在尝试安装...")
-    try:
-        # 尝试使用 --user 标志进行用户级别的安装，避免权限问题
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--user", "requests"])
-        import requests
-        print("requests库安装成功")
-    except Exception as e:
-        print(f"安装requests库失败: {e}")
-        print("请手动执行: pip install requests")
-        # 即使失败也继续，但上传功能会受影响
-
 # 导入共享工具库
 try:
     import shared_utils
 except ImportError:
     print("错误：缺少共享工具库 'shared_utils.py'。请确保它与主脚本在同一目录下。")
     sys.exit(1)
-
 
 # 全局变量
 INSTALL_DIR = Path.home() / ".agsb"  # 用户主目录下的隐藏文件夹，避免root权限
