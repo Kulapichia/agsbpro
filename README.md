@@ -200,6 +200,7 @@ sudo systemctl enable hysteria-server.service hysteria-fileserver.service
 
 # 3. 立即启动这两个服务
 sudo systemctl start hysteria-server.service hysteria-fileserver.service
+```
 
 #### **第四步：全面验证服务**
 
@@ -234,32 +235,6 @@ sudo systemctl start hysteria-server.service hysteria-fileserver.service
     > **期望结果**：屏幕上会打印出 `clash.yaml` 的内容。同时，在您的电脑或手机上，使用客户端应该能通过 Hysteria2 成功连接并上网。
 
 如果以上所有验证都通过，则表示所有服务已成功持久化运行。如果失败，请参考下方的 **[故障排除](#-故障排除)** 章节。
-
-### 🛠️ 服务持久化：Systemd 全自动管理
-
-> **默认行为**：脚本在安装时，会**自动尝试**创建并启用 `systemd` 服务，以确保 Hysteria2 和配置文件下载服务能够在服务器重启后自动运行。您无需手动操作。
-
-#### **如何确认 Systemd 服务是否成功？**
-
-在安装过程的最后，脚本会输出类似 "✅ Systemd 服务配置成功！" 的提示。您也可以随时通过以下命令检查：
-
-```bash
-# 检查 Hysteria2 主服务状态
-sudo systemctl status hysteria-server.service
-
-# 检查配置文件下载服务状态
-sudo systemctl status hysteria-fileserver.service
-```
-> **期望结果**：两个服务的状态都应显示为绿色的 `Active: active (running)`。
-
-#### **如果自动配置 Systemd 失败怎么办？**
-
-在极少数情况下（如在非标准的Linux发行版或容器中），自动配置可能会失败。此时脚本会智能地回退到临时的 `nohup` 启动方式。您可以按照旧的手动方法创建 `systemd` 文件，或者使用 `screen` / `tmux` 等工具来保持进程在后台运行。
-
-**相关管理命令**：
-- **查看实时日志**: `sudo journalctl -u hysteria-server.service -f`
-- **重启服务**: `sudo systemctl restart hysteria-server.service`
-- **停止服务**: `sudo systemctl stop hysteria-server.service`
 
 ### 🔧 故障排除
 
