@@ -35,67 +35,58 @@ def check_nginx_installed():
     return False
 
 def http_get(url, timeout=10):
-    """更健壮的HTTP GET请求，优先使用requests库"""
+    """
+    统一使用 urllib 实现的 HTTP GET 请求。
+    移除了对 requests 的依赖，以保持零依赖特性。
+    增加了对 HTTPS 状态码的检查。
+    """
     try:
-        import requests
+        # 创建一个上下文来忽略SSL证书验证，增强兼容性
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        # verify=False 忽略SSL证书验证
-        response = requests.get(url, headers=headers, timeout=timeout, verify=False)
-        response.raise_for_status() # 如果状态码不是200-299，则抛出异常
-        return response.text
-    except ImportError:
-        # Fallback to urllib if requests is not installed
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, context=ctx, timeout=timeout) as response:
-                return response.read().decode('utf-8')
-        except Exception as e:
-            print(f"HTTP请求失败 (urllib): {url}, 错误: {e}")
-            return None
+        
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as response:
+            # 检查HTTP状态码
+            if response.getcode() >= 400:
+                print(f"HTTP请求失败: {url}, 状态码: {response.getcode()}")
+                return None
+            return response.read().decode('utf-8')
     except Exception as e:
-        print(f"HTTP请求失败 (requests): {url}, 错误: {e}")
+        print(f"HTTP请求失败 (urllib): {url}, 错误: {e}")
         return None
 
 
 def download_file(url, target_path, mode='wb'):
-    """更健壮的文件下载，优先使用requests库"""
+    """
+    统一使用 urllib 实现的文件下载。
+    移除了对 requests 的依赖。
+    """
     try:
-        import requests
+        # 创建一个上下文来忽略SSL证书验证
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-        with requests.get(url, headers=headers, stream=True, verify=False) as r:
-            r.raise_for_status()
-            with open(target_path, mode) as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
+        
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, context=ctx) as response, open(target_path, mode) as out_file:
+            # 检查HTTP状态码
+            if response.getcode() >= 400:
+                 print(f"下载文件失败: {url}, 状态码: {response.getcode()}")
+                 return False
+            shutil.copyfileobj(response, out_file)
         return True
-    except ImportError:
-        # Fallback to urllib
-        try:
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-            }
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, context=ctx) as response, open(target_path, mode) as out_file:
-                shutil.copyfileobj(response, out_file)
-            return True
-        except Exception as e:
-            print(f"下载文件失败 (urllib): {url}, 错误: {e}")
-            return False
     except Exception as e:
-        print(f"下载文件失败 (requests): {url}, 错误: {e}")
+        print(f"下载文件失败 (urllib): {url}, 错误: {e}")
         return False
 
 def download_binary(name, download_url, target_path):
