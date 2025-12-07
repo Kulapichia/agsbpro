@@ -2,13 +2,15 @@
 
 # 检查是否提供了密码参数
 if [ -z "$1" ]; then
-    echo "错误: 请提供要设置的root密码作为第一个参数。"
-    echo "用法: ./gcp-passwd-set.sh 'YourNewSecurePassword'"
-    exit 1
+    echo "⚠️  警告: 未提供密码。将为您生成一个高强度随机密码。"
+    # 使用 /dev/urandom 和 tr 生成一个16位的随机密码
+    ROOT_PASSWORD=$(head /dev/urandom | tr -dc 'A-Za-z0-9!@#$%^&*' | head -c 16)
+    echo "🔑 生成的随机密码: $ROOT_PASSWORD"
+    echo "请务必保存好此密码！"
+else
+    # 从第一个命令行参数获取密码
+    ROOT_PASSWORD="$1"
 fi
-
-# 从第一个命令行参数获取密码
-ROOT_PASSWORD="$1"
 PROJECT_ID=$(gcloud config get-value project)
 MAX_CONCURRENT=12  # 最大并发数
 
