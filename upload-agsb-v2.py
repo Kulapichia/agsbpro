@@ -767,6 +767,21 @@ def install(args):
         print("\033[31m错误: 使用Argo Token时，自定义域名是必需的但未提供。\033[0m")
         sys.exit(1)
     if final_domain:
+        # 将服务信息写入共享配置
+        ws_path = f"/{uuid_str[:8]}-vm"
+        argosb_service_data = {
+            "domain": final_domain, "ws_path": ws_path, "internal_port": port_vm_ws, "type": "argosb"
+        }
+        update_shared_config("argosb", argosb_service_data)
+
+        # 检查并配置Nginx
+        nginx_is_installed, nginx_config_path = check_nginx_installed()
+        if not nginx_is_installed:
+            if not install_nginx():
+                print("❌ Nginx安装失败，但服务仍可独立运行。")
+        elif not nginx_config_path:
+            print("⚠️ Nginx已安装但未找到主配置文件，将创建全新的配置文件。")
+            create_full_nginx_config()
         # 生成所有节点链接
         all_links = []
         ws_path = f"/{uuid_str[:8]}-vm"
@@ -809,6 +824,11 @@ def install(args):
         all_links.append(generate_vmess_link(direct_http_config))
         # 上传到API
         all_links_b64 = base64.b64encode("\n".join(all_links).encode()).decode()
+        # 获取生成的链接用于上传
+        all_links_content = (INSTALL_DIR / "allnodes.txt").read_text()
+        all_links_b64 = base64.b64encode(all_links_content.encode()).decode()
+        
+        # 恢复对 upload_to_api 的调用
         if 'upload_to_api' in globals():
             upload_to_api(all_links_b64, user_name)
         # 继续原有的节点文件保存和打印逻辑
