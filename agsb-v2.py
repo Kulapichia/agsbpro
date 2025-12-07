@@ -149,9 +149,11 @@ def create_full_nginx_config():
         
         # Location 逻辑
         if service == 'argosb':
+             # 从共享配置动态读取伪装路径，提供默认值
+             web_root = data.get("web_root", "/var/www/html/argosb")
              locations_443.append(f"""
             if ($host = "{domain}") {{
-                root /var/www/html/argosb; # 伪装路径
+                root {web_root}; # 使用动态路径
                 index index.html;
                 try_files $uri $uri/ =404;
             }}""")
@@ -197,7 +199,7 @@ http {{
     server {{
         listen 443 ssl;
         listen [::]:443 ssl;
-	    http2 on;
+        http2 on;
         server_name {' '.join(set(server_names))} _;
         ssl_certificate         $ssl_certificate_file;
         ssl_certificate_key     $ssl_certificate_key_file;
