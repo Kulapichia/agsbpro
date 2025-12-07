@@ -28,7 +28,7 @@ def get_user_home():
 # ==============================================================================
 
 # 定义共享配置文件路径，放在.agsb目录外，便于多脚本访问
-SHARED_CONFIG_FILE = Path.home() / ".all_services.json"
+SHARED_CONFIG_FILE = Path(get_user_home()) / ".all_services.json"
 
 def check_nginx_installed():
     """
@@ -123,47 +123,47 @@ def create_full_nginx_config():
     
     shared_config = json.load(open(SHARED_CONFIG_FILE)) if SHARED_CONFIG_FILE.exists() else {}
 
-    cert_map, key_map, server_names, locations = [], [], [], []
+    # --- 1. 动态构建 map 块和 server_name ---
+    cert_map_lines, key_map_lines, server_names = [], [], []
+    locations_443 = []
 
-    # --- 动态构建 ---
+    # --- 2. 遍历共享配置，生成 Nginx 的各个部分 ---
     for service, data in shared_config.items():
         domain = data.get('domain')
         if not domain: continue
         server_names.append(domain)
 
-        # Map块
-        if data.get('cert_path'):
-            cert_map.append(f"        {domain}       {data['cert_path']};")
-            key_map.append(f"        {domain}       {data['key_path']};")
-
-        # Location块
-        if service == 'hysteria2':
-             locations.append(f'if ($host = "{domain}" or $host = $server_addr) {{ root {data["web_root"]}; index index.html; try_files $uri $uri/ =404; }}')
-        elif service == 'vpn_fileserver':
-             locations.append(f"""if ($host = "{domain}") {{
-                if ($request_uri ~* \\.(yaml|txt|json)$) {{ add_header Content-Disposition 'attachment'; }}
-                proxy_pass http://127.0.0.1:{data['internal_port']};
-                proxy_set_header Host $http_host;
-            }}""")
-        elif service == 'argosb':
-             locations.append(f"""if ($host = "{domain}") {{
+        # 证书 Map
+        cert_path = data.get('cert_path', f"/etc/nginx/ssl/{service}.pem")
+        key_path = data.get('key_path', f"/etc/nginx/ssl/{service}.key")
+        cert_map_lines.append(f"        {domain}    {cert_path};")
+        key_map_lines.append(f"        {domain}    {key_path};")
+        
+        # Location 逻辑
+        if service == 'argosb':
+             locations_443.append(f"""
+            if ($host = "{domain}") {{
                 root /var/www/html/argosb; # 伪装路径
                 index index.html;
                 try_files $uri $uri/ =404;
             }}""")
+        # 可在此处为其他服务添加location逻辑
+        # elif service == 'otherservice': ...
 
-    # 默认证书
-    default_cert, default_key = "/etc/nginx/ssl/default.crt", "/etc/nginx/ssl/default.key" # 备用路径
-    if 'hysteria2' in shared_config and shared_config['hysteria2'].get('cert_path'):
-        default_cert = shared_config['hysteria2']['cert_path']
-        default_key = shared_config['hysteria2']['key_path']
-    cert_map.append(f"        default             {default_cert};")
-    key_map.append(f"        default             {default_key};")
+    # 设置默认证书
+    default_cert = "/etc/nginx/ssl/default.crt"
+    default_key = "/etc/nginx/ssl/default.key"
+    if cert_map_lines: # 使用第一个找到的证书作为默认
+        default_cert = cert_map_lines[0].split()[1].strip(';')
+        default_key = key_map_lines[0].split()[1].strip(';')
+    cert_map_lines.append(f"        default             {default_cert};")
+    key_map_lines.append(f"        default             {default_key};")
 
-    locations.append("return 404;") # 兜底
-
-    # --- 组装模板 ---
-    nginx_template = f"""
+    locations_443.append("            return 404; # 兜底规则")
+    
+    # --- 3. 组装完整的 Nginx 配置 ---
+    nginx_config_template = f"""
+# --- Nginx 全局配置 (由脚本动态生成) ---
 user nginx;
 pid /run/nginx.pid;
 worker_processes auto;
@@ -179,37 +179,41 @@ http {{
     access_log  /var/log/nginx/access.log  main;
     map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}
     map $host $ssl_certificate_file {{
-{chr(10).join(cert_map)}
+{chr(10).join(cert_map_lines)}
     }}
     map $host $ssl_certificate_key_file {{
-{chr(10).join(key_map)}
+{chr(10).join(key_map_lines)}
     }}
-    include {os.path.abspath(NGINX_SNIPPET_FILE)};
+    # 包含由ArgoSB生成的WebSocket专用配置
+    include {os.path.abspath(NGINX_SNIPPET_FILE)}; 
     server {{
-        listen 443 ssl http2; listen [::]:443 ssl http2;
+        listen 443 ssl;
+        listen [::]:443 ssl;
+	    http2 on;
         server_name {' '.join(set(server_names))} _;
         ssl_certificate         $ssl_certificate_file;
         ssl_certificate_key     $ssl_certificate_key_file;
         ssl_protocols           TLSv1.2 TLSv1.3;
         location / {{
-{''.join(locations)}
+{''.join(locations_443)}
         }}
     }}
     server {{
-        listen 80 default_server; listen [::]:80 default_server;
+        listen 80 default_server;
+        listen [::]:80 default_server;
         server_name _;
         return 301 https://$host$request_uri;
     }}
 }}
 """
     try:
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".conf") as tmp:
             tmp.write(nginx_config_template)
             tmp_path = tmp.name
 
         main_conf_path = '/etc/nginx/nginx.conf'
         if os.path.exists(main_conf_path):
-            backup_path = main_conf_path + '.bak'
+            backup_path = f"{main_conf_path}.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
             print(f"   -> 正在备份当前 Nginx 配置到 {backup_path}")
             subprocess.run(['sudo', 'mv', main_conf_path, backup_path], check=True)
         
@@ -221,7 +225,7 @@ http {{
         if test_result.returncode != 0:
             print("❌ 新生成的 Nginx 配置测试失败，正在恢复备份...")
             print(test_result.stderr)
-            if os.path.exists(backup_path):
+            if 'backup_path' in locals() and os.path.exists(backup_path):
                 subprocess.run(['sudo', 'mv', backup_path, main_conf_path], check=True)
             return False
 
