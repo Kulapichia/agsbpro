@@ -143,11 +143,22 @@ def create_full_nginx_config():
     """动态读取所有服务配置，生成一个功能完备的nginx.conf"""
     print("📝 正在动态生成 Nginx 主配置文件...")
     
-    shared_config = json.load(open(SHARED_CONFIG_FILE)) if SHARED_CONFIG_FILE.exists() else {}
+    # 确保共享配置文件存在且可读
+    if not SHARED_CONFIG_FILE.exists():
+        print("⚠️ 共享配置文件不存在，无法生成Nginx配置。")
+        return False
+    try:
+        with open(SHARED_CONFIG_FILE, 'r') as f:
+            shared_config = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        print(f"❌ 读取共享配置文件失败: {e}")
+        return False
 
-    # --- 1. 动态构建 map 块和 server_name ---
+
+    # --- 1. 动态构建 map 块, server_name 和 location 块 ---
     cert_map_lines, key_map_lines, server_names = [], [], []
-    locations_443 = []
+    locations_443_main = []
+    locations_443_ws = []
 
     # --- 2. 遍历共享配置，生成 Nginx 的各个部分 ---
     for service, data in shared_config.items():
@@ -163,16 +174,27 @@ def create_full_nginx_config():
         
         # Location 逻辑
         if service == 'argosb':
-             # 从共享配置动态读取伪装路径，提供默认值
              web_root = data.get("web_root", "/var/www/html/argosb")
-             locations_443.append(f"""
+             ws_path = data.get("ws_path")
+             internal_port = data.get("internal_port")
+             locations_443_main.append(f"""
             if ($host = "{domain}") {{
                 root {web_root}; # 使用动态路径
                 index index.html;
                 try_files $uri $uri/ =404;
             }}""")
-        # 可在此处为其他服务添加location逻辑
-        # elif service == 'otherservice': ...
+             if ws_path and internal_port:
+                locations_443_ws.append(f"""
+        # ArgoSB WebSocket反向代理
+        location = {ws_path} {{
+            proxy_pass http://127.0.0.1:{internal_port};
+            proxy_http_version 1.1;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection "upgrade";
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }}""")
 
     # 设置默认证书
     default_cert = "/etc/nginx/ssl/default.crt"
@@ -183,7 +205,7 @@ def create_full_nginx_config():
     cert_map_lines.append(f"        default             {default_cert};")
     key_map_lines.append(f"        default             {default_key};")
 
-    locations_443.append("            return 404; # 兜底规则")
+    locations_443_main.append("            return 404; # 兜底规则")
     
     # --- 3. 组装完整的 Nginx 配置 ---
     nginx_config_template = f"""
@@ -208,18 +230,22 @@ http {{
     map $host $ssl_certificate_key_file {{
 {chr(10).join(key_map_lines)}
     }}
-    # 包含由ArgoSB生成的WebSocket专用配置
-    include {os.path.abspath(NGINX_SNIPPET_FILE)}; 
+    
+    # 主服务配置
     server {{
-        listen 443 ssl;
-        listen [::]:443 ssl;
-        http2 on;
+        listen 443 ssl http2;
+        listen [::]:443 ssl http2;
         server_name {' '.join(set(server_names))} _;
         ssl_certificate         $ssl_certificate_file;
         ssl_certificate_key     $ssl_certificate_key_file;
         ssl_protocols           TLSv1.2 TLSv1.3;
+        
+        # WebSocket 代理规则
+{chr(10).join(locations_443_ws)}
+
+        # 网站根目录和伪装规则
         location / {{
-{''.join(locations_443)}
+{''.join(locations_443_main)}
         }}
     }}
     server {{
@@ -973,15 +999,20 @@ def install():
             "ws_path": ws_path,
             "internal_port": port_vm_ws,
             "type": "argosb",
+            "web_root": "/var/www/html/argosb"
         }
         update_shared_config("argosb", argosb_service_data)
 
-        # 检查并创建完整Nginx配置（如果需要）
-        nginx_is_installed, nginx_config_path = check_nginx_installed()
-        if nginx_is_installed and not nginx_config_path:
-            print("⚠️  Nginx已安装但未找到主配置文件，将创建全新的配置文件。")
-            if 'create_full_nginx_config' in globals():
-                create_full_nginx_config()
+        # 确保Nginx已安装并创建/更新其主配置文件
+        nginx_is_installed, _ = check_nginx_installed()
+        if not nginx_is_installed:
+            if not install_nginx():
+                print("❌ Nginx安装失败，Web伪装和多服务共存不可用。")
+        
+        # 无论Nginx是刚安装还是已存在，都重新生成配置文件
+        print("正在更新Nginx主配置文件...")
+        if not create_full_nginx_config():
+            print("⚠️ 更新Nginx主配置文件失败，Web伪装可能无法工作。")
         generate_links(domain, port_vm_ws, uuid_str)
         
     else:
@@ -1275,7 +1306,7 @@ cd {INSTALL_DIR}
     os.chmod(str(sb_start_script), 0o755)
     # ---- 全新的统一化 Nginx 处理逻辑 (更智能) ----
     nginx_is_installed, nginx_config_path = check_nginx_installed()
-    ws_path = f"/{uuid_str}-vm"
+    ws_path = f"/{uuid_str[:8]}-vm"
     
     if not nginx_is_installed:
         if not install_nginx():
