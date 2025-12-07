@@ -337,18 +337,14 @@ def install(args):
         print("未提供自定义域名，将尝试在隧道启动后自动获取。")
         write_debug_log("Custom Domain (agn): Not provided, will attempt auto-detection.")
     # --- 下载依赖 ---
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    arch = ""
-    if system == "linux":
-        if "x86_64" in machine or "amd64" in machine: arch = "amd64"
-        elif "aarch64" in machine or "arm64" in machine: arch = "arm64"
-        elif "armv7" in machine: arch = "arm" # cloudflared uses 'arm' for armv7
-        else: arch = "amd64"
-    else:
-        print(f"不支持的系统类型: {system}")
-        sys.exit(1)
-    write_debug_log(f"检测到系统: {system}, 架构: {machine}, 使用架构标识: {arch}")
+    # 调用共享函数获取通用架构标识
+    arch = get_system_arch()
+    
+    # 针对不同程序对 'armv7' 的特殊命名进行处理，这部分是应用相关的特殊逻辑，必须保留
+    sb_arch = "armv7" if arch == "armv7" else arch # sing-box 使用 'armv7'
+    cf_arch = "arm" if arch == "armv7" else arch   # cloudflared 使用 'arm'
+
+    write_debug_log(f"检测到通用架构: {arch}, sing-box适用架构: {sb_arch}, cloudflared适用架构: {cf_arch}")
     # sing-box
     singbox_path = INSTALL_DIR / "sing-box"
     if not singbox_path.exists():
@@ -360,9 +356,8 @@ def install(args):
         except Exception as e:
             sb_version = "1.9.0-beta.11" # Fallback
             print(f"获取最新版本失败，使用默认版本: {sb_version}，错误: {e}")
-        sb_name = f"sing-box-{sb_version}-linux-{arch}"
-        if arch == "arm": sb_name_actual = f"sing-box-{sb_version}-linux-armv7"
-        else: sb_name_actual = sb_name
+        # 使用处理过的 sb_arch
+        sb_name_actual = f"sing-box-{sb_version}-linux-{sb_arch}"
         sb_url = f"https://github.com/SagerNet/sing-box/releases/download/v{sb_version}/{sb_name_actual}.tar.gz"
         tar_path = INSTALL_DIR / "sing-box.tar.gz"
         if not download_file(sb_url, tar_path):
@@ -390,8 +385,7 @@ def install(args):
     # cloudflared
     cloudflared_path = INSTALL_DIR / "cloudflared"
     if not cloudflared_path.exists():
-        cf_arch = arch
-        if arch == "armv7": cf_arch = "arm" # cloudflared uses 'arm' for 32-bit arm
+        # 使用处理过的 cf_arch
         cf_url = f"https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-{cf_arch}"
         if not download_binary("cloudflared", cf_url, cloudflared_path):
             print("cloudflared 下载失败，尝试使用备用地址")
