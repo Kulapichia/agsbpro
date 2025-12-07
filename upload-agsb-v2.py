@@ -410,8 +410,6 @@ def generate_vmess_link(config):
     return f"vmess://{vmess_b64}"
 
 # 生成链接
-# 生成链接
-# 生成链接
 def generate_links(domain, port_vm_ws, uuid_str):
     write_debug_log(f"生成链接: domain={domain}, port_vm_ws={port_vm_ws}, uuid_str={uuid_str}")
 
@@ -703,109 +701,84 @@ def install(args):
             if not download_binary("cloudflared", cf_url_backup, cloudflared_path):
                 print("cloudflared 备用下载也失败，退出安装")
                 sys.exit(1)
-    # --- 配置和启动 ---
+    # --- 统一安装流程 ---
     final_domain = custom_domain
+    
+    # 将初始配置写入文件
+    config_data = {
+        "user_name": user_name, "uuid_str": uuid_str, "port_vm_ws": port_vm_ws,
+        "argo_token": argo_token, "custom_domain_agn": custom_domain, # custom_domain可能为None
+        "install_date": datetime.now().strftime('%Y%m%d%H%M')
+    }
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(config_data, f, indent=2)
+    
+    # 总是先创建配置文件和启动脚本
+    create_sing_box_config(port_vm_ws, uuid_str)
+    create_startup_script() 
     
     # 临时隧道模式下，先获取域名
     if not argo_token and not custom_domain:
-        print("正在为临时隧道模式预启动服务以获取域名...")
-        temp_config_data = {
-            "user_name": user_name, "uuid_str": uuid_str, "port_vm_ws": port_vm_ws, "argo_token": None,
-            "custom_domain_agn": None, "install_date": datetime.now().strftime('%Y%m%d%H%M')
-        }
-        with open(CONFIG_FILE, 'w') as f: json.dump(temp_config_data, f, indent=2)
-        create_sing_box_config(port_vm_ws, uuid_str)
-        # 此时创建的启动脚本是直连模式
-        create_startup_script()
-        start_services()
+        print("正在为临时隧道模式启动服务以获取域名...")
+        start_services() # 启动服务
+        final_domain = get_tunnel_domain()
+        if not final_domain:
+            print("\033[31m无法获取tunnel域名。请检查argo.log或尝试手动指定域名。\033[0m")
+            sys.exit(1)
+
+        print(f"获取到临时域名: {final_domain}，正在停止临时服务并以最终配置重启...")
+        # 停止临时服务
+        os.system(f"kill $(cat {ARGO_PID_FILE} 2>/dev/null) 2>/dev/null; kill $(cat {SB_PID_FILE} 2>/dev/null) 2>/dev/null")
+        time.sleep(2)
         
-        final_domain = get_tunnel_domain()
-        if not final_domain:
-            print("\033[31m无法获取tunnel域名。请检查argo.log或尝试手动指定域名。\033[0m")
-            sys.exit(1)
-
-        print(f"获取到临时域名: {final_domain}，正在重新配置以协同Nginx...")
-        os.system(f"kill $(cat {ARGO_PID_FILE}) 2>/dev/null; kill $(cat {SB_PID_FILE}) 2>/dev/null")
-        time.sleep(1)
-
-    if not final_domain:
-        print("\033[31m错误：未能确定最终使用的域名，安装终止。\033[0m")
-        sys.exit(1)
-
-    # 写入最终的本地配置文件
-    config_data = {
-        "user_name": user_name, "uuid_str": uuid_str, "port_vm_ws": port_vm_ws,
-        "argo_token": argo_token, "custom_domain_agn": final_domain,
-        "install_date": datetime.now().strftime('%Y%m%d%H%M')
-    }
-    with open(CONFIG_FILE, 'w') as f: json.dump(config_data, f, indent=2)
-    write_debug_log(f"生成配置文件: {CONFIG_FILE} with data: {config_data}")
-    # 写入共享配置
-    ws_path = f"/{uuid_str[:8]}-vm"
-    argosb_service_data = {
-        "domain": final_domain, "ws_path": ws_path, "internal_port": port_vm_ws, "type": "argosb",
-    }
-    update_shared_config("argosb", argosb_service_data)
-
-    # 重新生成或确认配置文件和启动脚本
-    create_sing_box_config(port_vm_ws, uuid_str)
-    create_startup_script() # Now reads from config for token
-    setup_autostart()
-    start_services()
-    # --- 获取域名，配置Nginx，生成并上传链接 ---
-    final_domain = custom_domain
-    if not argo_token and not custom_domain: # Quick tunnel and no pre-set domain
-        print("正在等待临时隧道域名生成...")
-        final_domain = get_tunnel_domain()
-        if not final_domain:
-            print("\033[31m无法获取tunnel域名。请检查argo.log或尝试手动指定域名。\033[0m")
-            sys.exit(1)
-        # 获取域名后更新配置文件
+        # 使用获取到的域名更新配置
         config_data["custom_domain_agn"] = final_domain
         with open(CONFIG_FILE, 'w') as f:
             json.dump(config_data, f, indent=2)
-    
-    elif argo_token and not custom_domain:
-        print("\033[31m错误: 使用Argo Token时，自定义域名是必需的但未提供。\033[0m")
+            
+    if not final_domain:
+        print("\033[31m错误：未能确定最终使用的域名，安装终止。\033[0m")
         sys.exit(1)
-
-    if final_domain:
-        # 将服务信息写入共享配置
-        ws_path = f"/{uuid_str[:8]}-vm"
-        argosb_service_data = {
-            "domain": final_domain,
-            "ws_path": ws_path,
-            "internal_port": port_vm_ws,
-            "type": "argosb",
-            "web_root": "/var/www/html/argosb"  # 提供伪装路径
-        }
-        update_shared_config("argosb", argosb_service_data)
         
-        # 检查并配置Nginx
-        nginx_is_installed, nginx_config_path = check_nginx_installed()
-        if not nginx_is_installed:
-            if not install_nginx():
-                print("❌ Nginx安装失败，Web伪装和多服务共存不可用。")
-        elif not nginx_config_path:
-            print("⚠️ Nginx已安装但未找到主配置文件，将创建全新的配置文件。")
-            create_full_nginx_config()
+    # 写入共享配置
+    ws_path = f"/{uuid_str[:8]}-vm"
+    argosb_service_data = {
+        "domain": final_domain, 
+        "ws_path": ws_path, 
+        "internal_port": port_vm_ws, 
+        "type": "argosb",
+        "web_root": "/var/www/html/argosb"
+    }
+    update_shared_config("argosb", argosb_service_data)
+    
+    # 配置Nginx
+    nginx_is_installed, nginx_config_path = check_nginx_installed()
+    if not nginx_is_installed:
+        if not install_nginx():
+            print("❌ Nginx安装失败，但服务仍可独立运行（Web伪装和多服务共存不可用）。")
+    elif not nginx_config_path:
+        print("⚠️ Nginx已安装但未找到主配置文件，将创建全新的配置文件。")
+        create_full_nginx_config()
 
-        # 生成所有链接和相关文件
-        generate_links(final_domain, port_vm_ws, uuid_str)
-        # 从已生成的文件中读取内容并上传
-        all_nodes_path = INSTALL_DIR / "allnodes.txt"
-        if all_nodes_path.exists():
-            all_links_content = all_nodes_path.read_text().strip()
-            if all_links_content:
-                print("\n正在上传订阅链接到服务器...")
-                upload_to_api(all_links_content, user_name) # 直接上传明文，API端处理编码
-            else:
-                print("⚠️ 节点文件为空，跳过上传。")
+    # 最终启动服务
+    setup_autostart()
+    start_services()
+
+    # 生成链接并上传
+    generate_links(final_domain, port_vm_ws, uuid_str)
+    
+    all_nodes_path = INSTALL_DIR / "allnodes.txt"
+    if all_nodes_path.exists():
+        all_links_content = all_nodes_path.read_text().strip()
+        if all_links_content:
+            # Base64编码后上传
+            all_links_b64 = base64.b64encode(all_links_content.encode('utf-8')).decode('utf-8')
+            print("\n正在上传订阅链接到服务器...")
+            upload_to_api(all_links_b64, user_name)
         else:
-            print("⚠️ 节点文件未生成，无法上传。")
+            print("⚠️ 节点文件为空，跳过上传。")
     else:
-        print("\033[31m最终域名未能确定，无法生成链接。\033[0m")
-        sys.exit(1)
+        print("⚠️ 节点文件未生成，无法上传。")
 
 # 设置开机自启动
 def setup_autostart():
