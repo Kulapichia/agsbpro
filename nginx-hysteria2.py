@@ -3433,43 +3433,47 @@ def setup_nginx_web_masquerade(base_dir, domain, web_dir, cert_path, key_path, p
     """配置nginx Web伪装 - 使用全新的统一化动态配置逻辑"""
     # ---- 全新的统一化 Nginx 处理逻辑 ----
     nginx_is_installed, nginx_config_path = check_nginx_installed()
-    
+    # 场景1：未安装 Nginx   
     if not nginx_is_installed:
+        print("🚀 将以【全自动模式】运行，自动安装并配置 Nginx。")
         if not install_nginx():
             print("❌ Nginx 安装失败，Web伪装不可用。")
             return False
-        # 重新检查
-        nginx_is_installed, nginx_config_path = check_nginx_installed()
-        if not nginx_is_installed:
-            print("❌ Nginx 安装后仍无法检测，安装终止。")
-            return False
-
-    # 核心决策：如果找不到主配置文件，我们就创建它
-    if not nginx_config_path:
-        print("⚠️ 未找到 Nginx 主配置文件，将创建全新的配置文件。")
         if not create_full_nginx_config():
-            print("❌ 创建完整的 Nginx 配置文件失败。")
+            print("❌ 创建全新的 Nginx 配置文件失败。")
             return False
+        print("✅ 全自动 Nginx 配置完成。")
+        return True
+
+    # 场景2：已安装 Nginx，但未找到主配置文件
+    if not nginx_config_path:
+        print("🚀 Nginx已安装但无主配置，将以【全自动模式】创建全新配置。")
+        if not create_full_nginx_config():
+            print("❌ 创建全新的 Nginx 配置文件失败。")
+            return False
+        print("✅ 全自动 Nginx 配置完成。")
+        return True
+
+    # 场景3：已安装 Nginx，且找到主配置文件
     else:
         print(f"🤝 检测到主配置文件 '{nginx_config_path}'，进入【Nginx 协同模式】。")
-        print("   脚本不会修改您的主配置，请确保已正确配置以支持所有服务。")
-        print("   Hysteria2的证书和Web路径信息已写入共享配置，可供您手动配置Nginx时参考。")
+        print("   脚本不会修改您的主配置。请确保您的配置能正确处理新服务。")
+        print("   Hysteria2的服务信息已写入共享配置，可供您手动配置Nginx时参考。")
+        # 协同模式下，仍然尝试重载，以应用可能的外部修改
+        try:
+            print("   -> 正在测试并重载 Nginx 配置以确保协同生效...")
+            test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+            if test_result.returncode != 0:
+                print("❌ 您现有的 Nginx 配置测试失败，无法自动重载。请手动检查并修复。")
+                print(test_result.stderr)
+                return True # 协同模式下，即使重载失败也视为成功，不中断主流程
 
-    # 无论如何都尝试重载Nginx
-    try:
-        print("   -> 正在测试并重载 Nginx 配置...")
-        test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
-        if test_result.returncode != 0:
-            print("❌ Nginx 配置测试失败，无法自动重载。请手动检查配置。")
-            print(test_result.stderr)
-            return True # 即使重载失败，也认为协同模式设置成功，不中断主流程
-
-        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
-        print("✅ Nginx 已成功重载。")
-        return True
-    except Exception as e:
-        print(f"❌ 重载 Nginx 时发生错误: {e}")
-        return False
+            subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+            print("✅ Nginx 已成功重载。")
+            return True
+        except Exception as e:
+            print(f"❌ 重载 Nginx 时发生错误: {e}")
+            return False
 def enable_bbr_optimization():
     """启用BBR拥塞控制算法优化网络性能"""
     try:
