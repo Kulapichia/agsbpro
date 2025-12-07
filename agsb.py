@@ -15,10 +15,21 @@ import platform
 from datetime import datetime
 import uuid
 from pathlib import Path
-import urllib.request
-import ssl
 import tempfile
+# 导入共享工具库
+try:
+    import shared_utils
+except ImportError:
+    print("错误：缺少共享工具库 'shared_utils.py'。请确保它与主脚本在同一目录下。")
+    sys.exit(1)
 
+# 使用共享工具库中的函数
+check_nginx_installed = shared_utils.check_nginx_installed
+http_get = shared_utils.http_get
+download_file = shared_utils.download_file
+download_binary = shared_utils.download_binary
+generate_vmess_link = shared_utils.generate_vmess_link
+get_system_arch = shared_utils.get_system_arch
 # 全局变量
 INSTALL_DIR = Path.home() / ".agsb"  # 用户主目录下的隐藏文件夹，避免root权限
 CONFIG_FILE = INSTALL_DIR / "config.json"
@@ -28,59 +39,6 @@ LIST_FILE = INSTALL_DIR / "list.txt"
 LOG_FILE = INSTALL_DIR / "argo.log"
 DEBUG_LOG = INSTALL_DIR / "python_debug.log"
 NGINX_SNIPPET_FILE = INSTALL_DIR / "nginx_agsb_snippet.conf" # 用于存放生成的Nginx配置片段
-
-def check_nginx_installed():
-    """检查系统中是否安装了Nginx"""
-    # 使用 shutil.which 检查 nginx 命令是否存在于 PATH 中
-    if shutil.which('nginx'):
-        try:
-            # 进一步通过版本号确认
-            result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
-            if "nginx version" in result.stdout:
-                print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
-                return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    print("ℹ️ 未检测到 Nginx。")
-    return False
-
-# 网络请求函数
-def http_get(url, timeout=10):
-    try:
-        # 创建一个上下文来忽略SSL证书验证
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, context=ctx, timeout=timeout) as response:
-            return response.read().decode('utf-8')
-    except Exception as e:
-        print(f"HTTP请求失败: {url}, 错误: {e}")
-        return None
-
-def download_file(url, target_path, mode='wb'):
-    try:
-        # 创建一个上下文来忽略SSL证书验证
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-        
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        
-        req = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(req, context=ctx) as response, open(target_path, mode) as out_file:
-            shutil.copyfileobj(response, out_file)
-        return True
-    except Exception as e:
-        print(f"下载文件失败: {url}, 错误: {e}")
-        return False
 
 # 脚本信息
 def print_info():
@@ -116,40 +74,6 @@ def write_debug_log(message):
             f.write(f"[{timestamp}] {message}\n")
     except Exception as e:
         print(f"写入日志失败: {e}")
-
-# 下载二进制文件
-def download_binary(name, download_url, target_path):
-    print(f"正在下载 {name}...")
-    success = download_file(download_url, target_path)
-    if success:
-        print(f"{name} 下载成功!")
-        os.chmod(target_path, 0o755)  # 设置可执行权限
-        return True
-    else:
-        print(f"{name} 下载失败!")
-        return False
-
-# 生成VMess链接
-def generate_vmess_link(config):
-    vmess_obj = {
-        "v": "2",
-        "ps": config.get("ps", "ArgoSB"),
-        "add": config.get("add", ""),
-        "port": config.get("port", "443"),
-        "id": config.get("id", ""),
-        "aid": config.get("aid", "0"),
-        "net": config.get("net", "ws"),
-        "type": config.get("type", "none"),
-        "host": config.get("host", ""),
-        "path": config.get("path", ""),
-        "tls": config.get("tls", "tls"),
-        "sni": config.get("sni", "")
-    }
-    
-    vmess_str = json.dumps(vmess_obj)
-    vmess_b64 = base64.b64encode(vmess_str.encode()).decode()
-    
-    return f"vmess://{vmess_b64}"
 
 # 生成链接
 def generate_links(domain, port_vm_ws, uuid_str):
@@ -485,25 +409,7 @@ def install():
     write_debug_log("开始安装过程")
     
     # 检测系统架构
-    system = platform.system().lower()
-    machine = platform.machine().lower()
-    
-    write_debug_log(f"检测到系统: {system}, 架构: {machine}")
-    
-    # 判断架构类型
-    if system == "linux":
-        if "x86_64" in machine or "amd64" in machine:
-            arch = "amd64"
-        elif "aarch64" in machine or "arm64" in machine:
-            arch = "arm64"
-        elif "armv7" in machine:
-            arch = "armv7"
-        else:
-            arch = "amd64"  # 默认
-    else:
-        print("不支持的系统类型: {}".format(system))
-        sys.exit(1)
-    
+    arch = get_system_arch()
     write_debug_log(f"确定架构类型为: {arch}")
     
     # 获取sing-box最新版本号
