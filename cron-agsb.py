@@ -41,23 +41,239 @@ ARGO_PID_FILE = INSTALL_DIR / "sbargopid.log"
 LIST_FILE = INSTALL_DIR / "list.txt"
 LOG_FILE = INSTALL_DIR / "argo.log"
 DEBUG_LOG = INSTALL_DIR / "python_debug.log"
+CUSTOM_DOMAIN_FILE = INSTALL_DIR / "custom_domain.txt" # 存储最终使用的域名
 UPLOAD_API = "https://file.zmkk.fun/api/upload"  # 文件上传API
 NGINX_SNIPPET_FILE = INSTALL_DIR / "nginx_agsb_snippet.conf" # 用于存放生成的Nginx配置片段
 
+# ==============================================================================
+# ============================ 新增：核心自动化函数 ============================
+# ==============================================================================
+
+# 定义共享配置文件路径，放在.agsb目录外，便于多脚本访问
+SHARED_CONFIG_FILE = Path.home() / ".all_services.json"
+
 def check_nginx_installed():
-    """检查系统中是否安装了Nginx"""
-    # 使用 shutil.which 检查 nginx 命令是否存在于 PATH 中
-    if shutil.which('nginx'):
+    """
+    检查系统中是否安装了Nginx，并尝试定位主配置文件。
+    返回一个元组 (is_installed, config_path)。
+    """
+    if not shutil.which('nginx'):
+        print("ℹ️ 未在 PATH 中检测到 Nginx。")
+        return False, None
+
+    try:
+        result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
+        if "nginx version" not in result.stdout:
+            print("ℹ️ nginx 命令存在，但版本信息无法识别。")
+            return False, None
+        print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print("ℹ️ 未能成功执行 nginx -v。")
+        return False, None
+
+    possible_config_paths = [
+        '/etc/nginx/nginx.conf',
+        '/usr/local/nginx/conf/nginx.conf',
+        '/usr/local/etc/nginx/nginx.conf',
+        '/opt/homebrew/etc/nginx/nginx.conf',
+        '/etc/nginx/conf/nginx.conf'
+    ]
+    
+    found_config_path = next((path for path in possible_config_paths if os.path.exists(path)), None)
+    
+    if found_config_path:
+        print(f"🔍 发现已存在的 Nginx 主配置文件: {found_config_path}")
+    else:
+        print("🤔 Nginx 已安装，但未在标准路径找到主配置文件。")
+
+    return True, found_config_path
+
+def update_shared_config(service_name, data):
+    """
+    更新或添加一个服务的配置到共享文件中。
+    :param service_name: 服务的唯一标识符, e.g., 'argosb'
+    :param data: 包含该服务信息的字典, e.g., {'domain': 'a.com', 'ws_path': '/path', 'port': 12345}
+    """
+    try:
+        shared_config = {}
+        if SHARED_CONFIG_FILE.exists():
+            with open(SHARED_CONFIG_FILE, 'r') as f:
+                try:
+                    shared_config = json.load(f)
+                except json.JSONDecodeError:
+                    write_debug_log(f"Warning: Shared config file {SHARED_CONFIG_FILE} is corrupted or empty.")
+                    pass
+        
+        shared_config[service_name] = data
+
+        with open(SHARED_CONFIG_FILE, 'w') as f:
+            json.dump(shared_config, f, indent=2)
+
+        write_debug_log(f"Updated shared config for {service_name} with data: {data}")
+        return True
+    except Exception as e:
+        write_debug_log(f"Failed to update shared config: {e}")
+        return False
+
+def install_nginx():
+    """使用系统包管理器安装Nginx"""
+    print("🔧 未检测到 Nginx，正在尝试自动安装...")
+    package_manager = 'apt-get' if shutil.which('apt-get') else 'yum' if shutil.which('yum') else 'dnf' if shutil.which('dnf') else None
+
+    if package_manager:
         try:
-            # 进一步通过版本号确认
-            result = subprocess.run(['nginx', '-v'], capture_output=True, text=True, stderr=subprocess.STDOUT)
-            if "nginx version" in result.stdout:
-                print(f"✅ 检测到 Nginx 已安装 ({result.stdout.strip()})")
-                return True
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            pass
-    print("ℹ️ 未检测到 Nginx。")
-    return False
+            print("   - 正在更新包索引 (需要sudo权限)...")
+            if package_manager == 'apt-get':
+                subprocess.run(['sudo', package_manager, 'update', '-y'], check=True, capture_output=True, text=True)
+            
+            print(f"   - 正在使用 '{package_manager}' 安装Nginx...")
+            subprocess.run(['sudo', package_manager, 'install', '-y', 'nginx'], check=True, capture_output=True, text=True)
+            print("✅ Nginx 安装成功。")
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            error_output = e.stderr if hasattr(e, 'stderr') else str(e)
+            print(f"❌ Nginx 自动安装失败: {error_output}")
+            print("   请手动安装 Nginx 后重新运行脚本: 'sudo apt install nginx' 或 'sudo yum install nginx'")
+            return False
+    else:
+        print("❌ 未能识别系统包管理器 (apt/yum/dnf)，无法自动安装 Nginx。")
+        return False
+
+def create_full_nginx_config():
+    """动态读取所有服务配置，生成一个功能完备的nginx.conf"""
+    print("📝 正在动态生成 Nginx 主配置文件...")
+    
+    shared_config = json.load(open(SHARED_CONFIG_FILE)) if SHARED_CONFIG_FILE.exists() else {}
+
+    # --- 1. 动态构建 map 块和 server_name ---
+    cert_map_lines, key_map_lines, server_names = [], [], []
+    locations_443 = []
+
+    # --- 2. 遍历共享配置，生成 Nginx 的各个部分 ---
+    for service, data in shared_config.items():
+        domain = data.get('domain')
+        if not domain: continue
+        server_names.append(domain)
+
+        # 证书 Map
+        cert_path = data.get('cert_path', f"/etc/nginx/ssl/{service}.pem")
+        key_path = data.get('key_path', f"/etc/nginx/ssl/{service}.key")
+        cert_map_lines.append(f"        {domain}    {cert_path};")
+        key_map_lines.append(f"        {domain}    {key_path};")
+        
+        # Location 逻辑
+        if service == 'argosb':
+             # 从共享配置动态读取伪装路径，提供默认值
+             web_root = data.get("web_root", "/var/www/html/argosb")
+             locations_443.append(f"""
+            if ($host = "{domain}") {{
+                root {web_root}; # 使用动态路径
+                index index.html;
+                try_files $uri $uri/ =404;
+            }}""")
+        # 可在此处为其他服务添加location逻辑
+        # elif service == 'otherservice': ...
+
+    # 设置默认证书
+    default_cert = "/etc/nginx/ssl/default.crt"
+    default_key = "/etc/nginx/ssl/default.key"
+    if cert_map_lines: # 使用第一个找到的证书作为默认
+        default_cert = cert_map_lines[0].split()[1].strip(';')
+        default_key = key_map_lines[0].split()[1].strip(';')
+    cert_map_lines.append(f"        default             {default_cert};")
+    key_map_lines.append(f"        default             {default_key};")
+
+    locations_443.append("            return 404; # 兜底规则")
+    
+    # --- 3. 组装完整的 Nginx 配置 ---
+    nginx_config_template = f"""
+# --- Nginx 全局配置 (由脚本动态生成) ---
+user nginx;
+pid /run/nginx.pid;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+events {{ worker_connections 1024; }}
+http {{
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile on; tcp_nopush on; keepalive_timeout 65;
+    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
+                      '$status $body_bytes_sent "$http_referer" '
+                      '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log  /var/log/nginx/access.log  main;
+    map $http_upgrade $connection_upgrade {{ default upgrade; '' close; }}
+    map $host $ssl_certificate_file {{
+{chr(10).join(cert_map_lines)}
+    }}
+    map $host $ssl_certificate_key_file {{
+{chr(10).join(key_map_lines)}
+    }}
+    # 包含由ArgoSB生成的WebSocket专用配置
+    include {os.path.abspath(NGINX_SNIPPET_FILE)}; 
+    server {{
+        listen 443 ssl;
+        listen [::]:443 ssl;
+        http2 on;
+        server_name {' '.join(set(server_names))} _;
+        ssl_certificate         $ssl_certificate_file;
+        ssl_certificate_key     $ssl_certificate_key_file;
+        ssl_protocols           TLSv1.2 TLSv1.3;
+        location / {{
+{''.join(locations_443)}
+        }}
+    }}
+    server {{
+        listen 80 default_server;
+        listen [::]:80 default_server;
+        server_name _;
+        return 301 https://$host$request_uri;
+    }}
+}}
+"""
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix=".conf") as tmp:
+            tmp.write(nginx_config_template)
+            tmp_path = tmp.name
+
+        main_conf_path = '/etc/nginx/nginx.conf'
+        if os.path.exists(main_conf_path):
+            backup_path = f"{main_conf_path}.bak.{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            print(f"   -> 正在备份当前 Nginx 配置到 {backup_path}")
+            subprocess.run(['sudo', 'mv', main_conf_path, backup_path], check=True)
+        
+        print(f"   -> 正在写入新的 Nginx 配置文件到 {main_conf_path}")
+        subprocess.run(['sudo', 'mv', tmp_path, main_conf_path], check=True)
+
+        print("   -> 正在测试新的 Nginx 配置...")
+        test_result = subprocess.run(['sudo', 'nginx', '-t'], capture_output=True, text=True)
+        if test_result.returncode != 0:
+            print("❌ 新生成的 Nginx 配置测试失败，正在恢复备份...")
+            print(test_result.stderr)
+            if 'backup_path' in locals() and os.path.exists(backup_path):
+                subprocess.run(['sudo', 'mv', backup_path, main_conf_path], check=True)
+            return False
+
+        print("   -> 正在重载 Nginx 服务...")
+        subprocess.run(['sudo', 'systemctl', 'reload', 'nginx'], check=True)
+        print("✅ Nginx 已成功应用新配置。")
+        return True
+
+    except Exception as e:
+        print(f"❌ 创建或应用 Nginx 配置时发生严重错误: {e}")
+        return False
+
+# 添加命令行参数解析
+def parse_args():
+    parser = argparse.ArgumentParser(description="ArgoSB Python3 一键脚本 (支持自定义域名和Argo Token)")
+    parser.add_argument("action", nargs="?", default="install",
+                        choices=["install", "status", "update", "del", "uninstall", "cat"],
+                        help="操作类型: install(安装), status(状态), update(更新), del(卸载), cat(查看节点)")
+    parser.add_argument("--domain", "-d", dest="agn", help="设置自定义域名 (例如: xxx.trycloudflare.com 或 your.custom.domain)")
+    parser.add_argument("--uuid", "-u", help="设置自定义UUID")
+    parser.add_argument("--port", "-p", dest="vmpt", type=int, help="设置自定义Vmess端口")
+    parser.add_argument("--agk", "--token", dest="agk", help="设置 Argo Tunnel Token (用于Cloudflare Zero Trust命名隧道)")
+
+    return parser.parse_args()
 # 网络请求函数
 def http_get(url, timeout=10):
     try:
