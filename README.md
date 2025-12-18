@@ -65,10 +65,11 @@
 #### 📥 一键部署
 ```bash
 # 方式一：wget下载
-cd ~ && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
+cd ~ && rm -f nginx-hysteria2.py shared_utils.py && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-hysteria2.py && wget https://raw.githubusercontent.com/Kulapichia/agsbpro/main/shared_utils.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
 
 # 方式二：curl下载
-cd ~ && curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-hysteria2.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
+cd ~ && rm -f nginx-hysteria2.py shared_utils.py && curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/main/nginx-hysteria2.py && curl -O https://raw.githubusercontent.com/Kulapichia/agsbpro/main/shared_utils.py && python3 nginx-hysteria2.py install --simple --port-range 28888-29999 --enable-bbr
+
 ```
 > **注意**：执行完毕后，请妥善保存屏幕上输出的 **“服务器信息”**。脚本已自动处理Nginx，无需手动重载。
 >
