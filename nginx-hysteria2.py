@@ -2793,7 +2793,8 @@ def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE",
             print("⚠️ BBR优化失败，但不影响主要功能")
     
     # 9. 创建并启动Hysteria2服务 (修改为 Systemd 方式)
-    # start_script = create_service_script(base_dir, binary_path, config_path, port) # 不再需要临时脚本
+    # 强制生成 start.sh 作为备用，防止保活脚本找不到文件
+    start_script = create_service_script(base_dir, binary_path, config_path, port)
     # service_started = start_service(start_script, port, base_dir) # 注释掉临时的 nohup 启动方式
     # if service_started:
     #     print(f"✅ Hysteria2服务启动成功")
