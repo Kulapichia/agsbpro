@@ -489,11 +489,12 @@ http {{
         
         import tempfile
         # 确保目标目录存在
+        ssl_conf_file = "/etc/nginx/nginx.conf"
         subprocess.run(['sudo', 'mkdir', '-p', os.path.dirname(ssl_conf_file)], check=True)
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.conf') as tmp:
             tmp.write(nginx_conf)
             tmp.flush()
-            subprocess.run(['sudo', 'cp', tmp.name, '/etc/nginx/nginx.conf'], check=True)
+            subprocess.run(['sudo', 'cp', tmp.name, ssl_conf_file], check=True)
             os.unlink(tmp.name)
         
         subprocess.run(['sudo', 'rm', '-f', '/etc/nginx/conf.d/*.conf'], check=True)
@@ -2614,6 +2615,9 @@ fi
         os.chmod(monitor_script, 0o755)
 
         # 添加到 Crontab (每分钟执行)
+        # 尝试启动 cron 服务（不同系统服务名不同）
+        subprocess.run(['sudo', 'systemctl', 'enable', '--now', 'cron'], check=False, capture_output=True)
+        subprocess.run(['sudo', 'systemctl', 'enable', '--now', 'crond'], check=False, capture_output=True)
         cron_job = f"* * * * * {monitor_script} >/dev/null 2>&1"
         try:
             current_cron = subprocess.run(['crontab', '-l'], capture_output=True, text=True).stdout
