@@ -2597,17 +2597,15 @@ def setup_auto_monitoring(base_dir, port):
         monitor_script = f"{base_dir}/monitor.sh"
         monitor_log = f"{base_dir}/logs/monitor.log"
         
-        # 写入监控脚本：检查 443/UDP 端口和 nginx 进程，如果挂了就重启
-        # 使用 ss 命令检查 UDP 端口是否在监听
+        # 1. 写入监控脚本
+        # 优化了判断逻辑：Systemd 失败后检查文件是否存在再运行 start.sh
         script_content = f"""#!/bin/bash
 # Check Hysteria (UDP Port {port})
 if ! ss -ulnp | grep -q ":{port} "; then
     echo "$(date): Hysteria Port {port} down, restarting..." >> {monitor_log}
     systemctl restart hysteria-server.service
-    if [ $? -ne 0 ]; then
-        if [ -f "{base_dir}/start.sh" ]; then
-            bash {base_dir}/start.sh
-        fi
+    if [ $? -ne 0 ] && [ -f "{base_dir}/start.sh" ]; then
+        bash {base_dir}/start.sh
     fi
 fi
 
@@ -2621,9 +2619,9 @@ fi
             f.write(script_content)
         os.chmod(monitor_script, 0o755)
 
-        # 优先使用 systemd timer（不依赖 crontab/cron 包）
+        # 2. 优先使用 systemd timer（不依赖 crontab/cron 包）
         if shutil.which('systemctl'):
-            print("✅ 检测到 systemd，使用 systemd timer 实现每分钟保活")
+            print("✅ 检测到 systemd，使用 systemd timer 实现每分钟保活 (推荐)")
             service_name = "hysteria-monitor.service"
             timer_name = "hysteria-monitor.timer"
 
@@ -2647,8 +2645,8 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 """
-
-            # 写 unit 文件（用临时文件 + sudo cp，避免权限问题）
+            # 写入 Unit 文件
+            import tempfile
             with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.service') as tmp:
                 tmp.write(service_unit)
                 tmp_path_service = tmp.name
@@ -2663,15 +2661,19 @@ WantedBy=timers.target
 
             subprocess.run(['sudo', 'systemctl', 'daemon-reload'], check=False)
             subprocess.run(['sudo', 'systemctl', 'enable', '--now', timer_name], check=False)
-            subprocess.run(['sudo', 'systemctl', 'restart', timer_name], check=False)
+            
+            # 同时为了保险，也加上 crontab 作为双保险（不冲突）
+            pass
 
-            return
-
-        # 回退方案：使用 crontab（需要 crontab 命令存在）
-        print("⚠️ 未检测到 systemd，尝试使用 crontab")
+        # 3. 回退/双重保障：使用 crontab
         if not shutil.which('crontab'):
-            print("⚠️ 未检测到 crontab 命令，无法设置定时任务")
+            if not shutil.which('systemctl'): # 既没 systemd 也没 crontab 才是真的没辙
+                print("⚠️ 未检测到 crontab 命令，无法设置定时任务")
             return
+
+        # 尝试启动 cron 服务
+        subprocess.run(['sudo', 'systemctl', 'enable', '--now', 'cron'], check=False, capture_output=True)
+        subprocess.run(['sudo', 'systemctl', 'enable', '--now', 'crond'], check=False, capture_output=True)
 
         cron_job = f"* * * * * {monitor_script} >/dev/null 2>&1"
         try:
@@ -2679,14 +2681,13 @@ WantedBy=timers.target
             if monitor_script not in current_cron:
                 new_cron = f"{current_cron.strip()}\n{cron_job}\n"
                 subprocess.run(['crontab', '-'], input=new_cron, text=True, check=True)
-                print("✅ 已添加每分钟自动保活任务")
+                print("✅ 已添加每分钟自动保活任务 (Crontab)")
         except:
             subprocess.run(['crontab', '-'], input=f"{cron_job}\n", text=True, check=False)
-            print("✅ 已创建保活任务")
+            print("✅ 已创建保活任务 (Crontab)")
 
     except Exception as e:
         print(f"⚠️ 保活配置失败: {e}")
-
 
 def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE", enable_real_cert=False, domain=None, email="admin@example.com", port_range=None, enable_bbr=False):
     """
