@@ -83,7 +83,19 @@ def set_nginx_permissions(web_dir):
         nginx_user = ensure_nginx_user()
         print(f"🔧 设置目录权限: {web_dir}")
         print(f"👤 使用用户: {nginx_user}")
-        
+        # 授予 Nginx 用户对 /root 路径的遍历权限，否则即使 web_dir 权限正确 Nginx 也进不来
+        # 1. 获取 web_dir 的父级目录链
+        path_parts = web_dir.split(os.sep)
+        current_path = ""
+        for part in path_parts:
+            if not part: continue # 跳过空字符串
+            current_path += os.sep + part
+            if current_path == web_dir: break # 到了目标目录停止
+            
+            # 为路径上的每一层目录添加 o+x (其他用户可遍历) 权限
+            # 这解决了 /root 目录默认为 700 导致 Nginx (Permission denied) 的问题
+            if os.path.exists(current_path):
+                subprocess.run(['sudo', 'chmod', 'o+x', current_path], check=False)        
         # 设置目录和文件权限
         subprocess.run(['sudo', 'chown', '-R', f'{nginx_user}:{nginx_user}', web_dir], check=True)
         subprocess.run(['sudo', 'chmod', '-R', '755', web_dir], check=True)
@@ -2576,6 +2588,46 @@ def setup_port_hopping_iptables(port_start, port_end, listen_port):
         print(f"⚠️ iptables配置失败: {e}")
         print("端口跳跃功能可能无法正常工作")
         return False
+def setup_auto_monitoring(base_dir, port):
+    """配置自动保活监控 (新增功能，解决几小时后断连问题)"""
+    try:
+        print("🔧 配置自动健康监测任务...")
+        monitor_script = f"{base_dir}/monitor.sh"
+        
+        # 写入监控脚本：检查 443/UDP 端口和 nginx 进程，如果挂了就重启
+        # 使用 ss 命令检查 UDP 端口是否在监听
+        script_content = f"""#!/bin/bash
+# Check Hysteria (UDP Port {port})
+if ! ss -ulnp | grep -q ":{port} "; then
+    echo "$(date): Hysteria Port {port} down, restarting..." >> {base_dir}/logs/monitor.log
+    systemctl restart hysteria-server.service || bash {base_dir}/start.sh
+fi
+
+# Check Nginx
+if ! pgrep -x "nginx" > /dev/null; then
+    echo "$(date): Nginx down, restarting..." >> {base_dir}/logs/monitor.log
+    systemctl restart nginx
+fi
+"""
+        with open(monitor_script, 'w') as f:
+            f.write(script_content)
+        os.chmod(monitor_script, 0o755)
+
+        # 添加到 Crontab (每分钟执行)
+        cron_job = f"* * * * * {monitor_script} >/dev/null 2>&1"
+        try:
+            current_cron = subprocess.run(['crontab', '-l'], capture_output=True, text=True).stdout
+            if monitor_script not in current_cron:
+                new_cron = f"{current_cron.strip()}\n{cron_job}\n"
+                subprocess.run(['crontab', '-'], input=new_cron, text=True, check=True)
+                print("✅ 已添加每分钟自动保活任务")
+        except:
+            # 如果没有 crontab，直接创建
+            subprocess.run(['crontab', '-'], input=f"{cron_job}\n", text=True, check=False)
+            print("✅ 已创建保活任务")
+            
+    except Exception as e:
+        print(f"⚠️ 保活配置失败: {e}")
 
 def deploy_hysteria2_complete(server_address, port=443, password="123qwe!@#QWE", enable_real_cert=False, domain=None, email="admin@example.com", port_range=None, enable_bbr=False):
     """
@@ -2973,8 +3025,11 @@ http:
         
         # 复制配置文件到nginx Web目录，提供下载
         setup_config_download_service(server_address, v2rayn_file, clash_file, hysteria_official_file, hysteria_client_hopping_file, subscription_file, subscription_plain_file, config_file)
-        
+        # 启用自动保活
+        setup_auto_monitoring(base_dir, port)        
     else:
+        # 启用自动保活
+        setup_auto_monitoring(base_dir, port)
         # 使用统一输出函数
         show_final_summary(
             server_address=server_address,
