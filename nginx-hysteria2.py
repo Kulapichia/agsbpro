@@ -2589,6 +2589,7 @@ def setup_port_hopping_iptables(port_start, port_end, listen_port):
         print(f"⚠️ iptables配置失败: {e}")
         print("端口跳跃功能可能无法正常工作")
         return False
+
 def setup_auto_monitoring(base_dir, port):
     """配置自动保活监控 (新增功能，解决几小时后断连问题)"""
     try:
@@ -2601,7 +2602,12 @@ def setup_auto_monitoring(base_dir, port):
 # Check Hysteria (UDP Port {port})
 if ! ss -ulnp | grep -q ":{port} "; then
     echo "$(date): Hysteria Port {port} down, restarting..." >> {base_dir}/logs/monitor.log
-    systemctl restart hysteria-server.service || bash {base_dir}/start.sh
+    systemctl restart hysteria-server.service
+    if [ $? -ne 0 ]; then
+        if [ -f "{base_dir}/start.sh" ]; then
+            bash {base_dir}/start.sh
+        fi
+    fi
 fi
 
 # Check Nginx
